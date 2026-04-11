@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+import json
+import tomllib
+from pathlib import Path
+from typing import Any
+
+MOOT_TOML = "moot.toml"
+AGENTS_JSON = ".agents.json"
+
+
+class AgentConfig:
+    def __init__(self, role: str, data: dict[str, Any]) -> None:
+        self.role = role
+        self.display_name: str = data.get("display_name", role.title())
+        self.profile: str = data.get("profile", "devcontainer")
+        self.startup_prompt: str = data.get(
+            "startup_prompt",
+            f"Run your startup protocol from CLAUDE.md. You are the {role.title()} agent.",
+        )
+
+
+class MootConfig:
+    def __init__(self, path: Path) -> None:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        convo = data.get("convo", {})
+        self.api_url: str = convo.get("api_url", "https://gemoot.com:8443")
+        self.space_id: str | None = convo.get("space_id")
+        harness = data.get("harness", {})
+        self.harness_type: str = harness.get("type", "claude-code")
+        self.permissions: str = harness.get("permissions", "dangerously-skip")
+        self.agents: dict[str, AgentConfig] = {}
+        for role, agent_data in data.get("agents", {}).items():
+            self.agents[role] = AgentConfig(role, agent_data)
+
+    @property
+    def roles(self) -> list[str]:
+        return list(self.agents.keys())
+
+
+def find_config() -> MootConfig | None:
+    """Find and parse moot.toml in cwd or parents."""
+    path = Path.cwd()
+    while path != path.parent:
+        toml_path = path / MOOT_TOML
+        if toml_path.exists():
+            return MootConfig(toml_path)
+        path = path.parent
+    return None
+
+
+def load_agent_keys() -> dict[str, str]:
+    """Load agent API keys from .agents.json."""
+    path = Path(AGENTS_JSON)
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+def cmd_config(args: object) -> None:
+    """Handle `moot config show/set/focus`."""
+    sub = getattr(args, "config_command", None)
+    config = find_config()
+    if not config:
+        print("Error: no moot.toml found. Run 'moot init' first.")
+        raise SystemExit(1)
+    if sub == "show" or sub is None:
+        print(f"API URL: {config.api_url}")
+        print(f"Space ID: {config.space_id or '(not set)'}")
+        print(f"Harness: {config.harness_type}")
+        print(f"Roles: {', '.join(config.roles)}")
+    elif sub == "set":
+        key = getattr(args, "key")
+        value = getattr(args, "value")
+        print(f"TODO: set {key} = {value}")
+    elif sub == "focus":
+        space_id = getattr(args, "space_id")
+        print(f"TODO: set focus space to {space_id}")

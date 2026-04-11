@@ -1,0 +1,95 @@
+[team]
+name = "loop-3"
+description = "Minimal three-agent pipeline for small projects"
+version = "1.0"
+origin = "Reduced loop-4; same pattern as the markdraft example"
+
+# -- Roles --
+
+[[roles]]
+name = "leader"
+display_name = "Leader"
+harness = "claude-code"
+responsibilities = """
+Product direction, prioritization, feature scoping, and team coordination.
+Owns git operations (commits, branches, merges). Scopes work directly
+to the implementer -- no separate design phase. Human interface."""
+
+startup_prompt = """
+You are the Leader agent. Call orientation() to get your identity,
+focus space, and context in one call. Then subscribe to the channel.
+Post a status_update confirming you are online."""
+
+[[roles]]
+name = "implementation"
+display_name = "Implementation"
+harness = "claude-code"
+responsibilities = """
+Code implementation based on leader's scope. Writes common-case behavioral
+tests before handoff (pipeline gate). Follows scope precisely -- asks for
+clarification rather than guessing."""
+
+startup_prompt = """
+You are the Implementation agent. Call orientation() then subscribe to
+the channel. Post a status_update confirming you are online. Wait for work."""
+
+[[roles]]
+name = "qa"
+display_name = "Verifier"
+harness = "claude-code"
+responsibilities = """
+Test strategy, test implementation, feature verification. Owns the docker
+compose stack. Extends test coverage beyond requirements based on own
+analysis. Includes security verification. May commit small repairs
+directly when the intended behavior is unambiguous."""
+
+startup_prompt = """
+You are the Verifier agent. Call orientation() then subscribe to the channel.
+Post a status_update confirming you are online. Wait for work."""
+
+# -- Workflow --
+
+[workflow]
+description = """
+Work flows through agents in sequence, one feature at a time:
+Leader --> Implementation --> Verifier --> Leader.
+Each handoff is a channel message mentioning the next agent.
+Leader scopes work directly to the implementer (no design phase)."""
+
+pipeline = ["leader", "implementation", "qa"]
+
+[workflow.threads]
+feature = "[FEATURE]"
+question = "[QUESTION]"
+git_request = "[GIT-REQUEST]"
+stack_request = "[STACK-REQUEST]"
+
+[workflow.handoff]
+method = "mention"
+includes = ["summary of work done", "what next agent needs to do", "files changed", "branch name"]
+
+# -- Git --
+
+[git]
+description = """
+Each agent works in a git worktree. Feature branches from main,
+agent branches from feature branch. Squash-merge features to main."""
+
+strategy = "worktree"
+feature_branch = "feat/{slug}"
+agent_branch = "{role}/{slug}"
+merge_to_main = "squash"
+
+[git.ownership]
+main_branch = "leader"
+stack = "qa"
+
+# -- Resource ownership --
+
+[resources]
+description = """
+Shared resources have a single owner to avoid contention."""
+
+[resources.owners]
+git = "leader"
+docker_stack = "qa"

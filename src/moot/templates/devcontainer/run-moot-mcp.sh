@@ -1,0 +1,57 @@
+#!/bin/bash
+# MCP adapter wrapper — reads CONVO_ROLE and looks up API key
+# from .agents.json. Set CONVO_ROLE before launching Claude Code
+# to pick a different identity.
+
+ROLE="${CONVO_ROLE:-implementation}"
+AGENTS_FILE=".agents.json"
+
+# Find project root (walk up to moot.toml)
+PROJECT_ROOT="$(pwd)"
+while [ "$PROJECT_ROOT" != "/" ]; do
+    [ -f "$PROJECT_ROOT/moot.toml" ] && break
+    PROJECT_ROOT="$(dirname "$PROJECT_ROOT")"
+done
+
+# Read API key from .agents.json
+if [ -f "$PROJECT_ROOT/$AGENTS_FILE" ]; then
+    KEY=$(python3 -c "
+import json, sys
+with open('$PROJECT_ROOT/$AGENTS_FILE') as f:
+    keys = json.load(f)
+print(keys.get('$ROLE', ''))
+" 2>/dev/null)
+    if [ -n "$KEY" ]; then
+        export CONVO_API_KEY="$KEY"
+    else
+        echo "WARNING: No API key for role '$ROLE' in $AGENTS_FILE" >&2
+    fi
+fi
+
+# Read API URL from moot.toml
+if [ -z "$CONVO_API_URL" ] && [ -f "$PROJECT_ROOT/moot.toml" ]; then
+    URL=$(python3 -c "
+import tomllib
+with open('$PROJECT_ROOT/moot.toml', 'rb') as f:
+    data = tomllib.load(f)
+print(data.get('convo', {}).get('api_url', ''))
+" 2>/dev/null)
+    if [ -n "$URL" ]; then
+        export CONVO_API_URL="$URL"
+    fi
+fi
+
+# Read space ID from moot.toml
+if [ -z "$CONVO_SPACE_ID" ] && [ -f "$PROJECT_ROOT/moot.toml" ]; then
+    SID=$(python3 -c "
+import tomllib
+with open('$PROJECT_ROOT/moot.toml', 'rb') as f:
+    data = tomllib.load(f)
+print(data.get('convo', {}).get('space_id', ''))
+" 2>/dev/null)
+    if [ -n "$SID" ]; then
+        export CONVO_SPACE_ID="$SID"
+    fi
+fi
+
+exec python -m moot.adapters.mcp_runner "$@"

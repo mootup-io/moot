@@ -1,0 +1,123 @@
+[team]
+name = "loop-4-split-leader"
+description = "Pipeline with separated Product (human-facing) and Lead (team-facing) coordination"
+version = "1.0"
+origin = "Variant of loop-4 for high human interaction load"
+
+# -- Roles --
+
+[[roles]]
+name = "product"
+display_name = "Product"
+harness = "claude-code"
+responsibilities = """
+Prioritization, requirements, stakeholder communication. Dispatches
+features to Lead. Does not directly coordinate the pipeline -- that's
+Lead's job. Human interface for product decisions."""
+
+startup_prompt = """
+You are the Product agent. Call orientation() to get your identity,
+focus space, and context in one call. Then subscribe to the channel.
+Post a status_update confirming you are online."""
+
+[[roles]]
+name = "lead"
+display_name = "Lead"
+harness = "claude-code"
+responsibilities = """
+Team coordination -- dispatch to Spec, merge branches, monitor pipeline,
+process QA handoffs, run retros. Reports completion back to Product.
+Owns git operations (commits, branches, merges)."""
+
+startup_prompt = """
+You are the Lead agent. Call orientation() then subscribe to the channel.
+Post a status_update confirming you are online. Wait for features from Product."""
+
+[[roles]]
+name = "spec"
+display_name = "Spec"
+harness = "claude-code"
+responsibilities = """
+Design docs, specifications, test plans, architecture review. Verifies
+technical claims against the codebase. Each spec includes security
+considerations. Produces implementation-ready specs with complete
+file content where possible."""
+
+startup_prompt = """
+You are the Spec agent. Call orientation() then subscribe to the channel.
+Post a status_update confirming you are online. Wait for work."""
+
+[[roles]]
+name = "implementation"
+display_name = "Implementation"
+harness = "claude-code"
+responsibilities = """
+Code implementation based on specs. Writes common-case behavioral tests
+before handoff (pipeline gate). Follows spec precisely -- asks for
+clarification rather than guessing."""
+
+startup_prompt = """
+You are the Implementation agent. Call orientation() then subscribe to
+the channel. Post a status_update confirming you are online. Wait for work."""
+
+[[roles]]
+name = "qa"
+display_name = "QA"
+harness = "claude-code"
+responsibilities = """
+Test strategy, test implementation, feature verification. Owns the docker
+compose stack. Extends test coverage beyond spec requirements based on
+own analysis. Includes security verification. May commit small repairs
+directly when the intended behavior is unambiguous."""
+
+startup_prompt = """
+You are the QA agent. Call orientation() then subscribe to the channel.
+Post a status_update confirming you are online. Wait for work."""
+
+# -- Workflow --
+
+[workflow]
+description = """
+Product dispatches features to Lead. The pipeline runs through Lead:
+Lead --> Spec --> Implementation --> QA --> Lead.
+Lead reports completion back to Product. This separates human-facing
+product decisions from team coordination."""
+
+pipeline = ["lead", "spec", "implementation", "qa"]
+
+[workflow.threads]
+feature = "[FEATURE]"
+question = "[QUESTION]"
+git_request = "[GIT-REQUEST]"
+stack_request = "[STACK-REQUEST]"
+
+[workflow.handoff]
+method = "mention"
+includes = ["summary of work done", "what next agent needs to do", "files changed", "branch name"]
+
+# -- Git --
+
+[git]
+description = """
+Each agent works in a git worktree. Feature branches from main,
+agent branches from feature branch. Squash-merge features to main.
+Lead owns git operations (not Product)."""
+
+strategy = "worktree"
+feature_branch = "feat/{slug}"
+agent_branch = "{role}/{slug}"
+merge_to_main = "squash"
+
+[git.ownership]
+main_branch = "lead"
+stack = "qa"
+
+# -- Resource ownership --
+
+[resources]
+description = """
+Shared resources have a single owner to avoid contention."""
+
+[resources.owners]
+git = "lead"
+docker_stack = "qa"

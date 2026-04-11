@@ -1,0 +1,111 @@
+[team]
+name = "loop-4"
+description = "Four-agent software development pipeline proven over 30+ features"
+version = "1.0"
+origin = "Observed from Convo project's agent team, April 2026"
+
+# -- Roles --
+# Order reflects the pipeline sequence.
+
+[[roles]]
+name = "product"
+display_name = "Product"
+harness = "claude-code"
+responsibilities = """
+Product direction, prioritization, feature scoping. Owns git operations
+(commits, branches, merges). Kicks off features, monitors pipeline,
+runs retrospectives. Human interface -- interprets requirements, makes
+judgment calls on scope and priority."""
+
+startup_prompt = """
+You are the Product agent. Call orientation() to get your identity,
+focus space, and context in one call. Then subscribe to the channel.
+Post a status_update confirming you are online."""
+
+[[roles]]
+name = "spec"
+display_name = "Spec"
+harness = "claude-code"
+responsibilities = """
+Design docs, specifications, test plans, architecture review. Verifies
+technical claims against the codebase. Each spec includes security
+considerations. Produces implementation-ready specs with complete
+file content where possible."""
+
+startup_prompt = """
+You are the Spec agent. Call orientation() then subscribe to the channel.
+Post a status_update confirming you are online. Wait for work."""
+
+[[roles]]
+name = "implementation"
+display_name = "Implementation"
+harness = "claude-code"
+responsibilities = """
+Code implementation based on specs. Writes common-case behavioral tests
+before handoff (pipeline gate). Follows spec precisely -- asks for
+clarification rather than guessing."""
+
+startup_prompt = """
+You are the Implementation agent. Call orientation() then subscribe to
+the channel. Post a status_update confirming you are online. Wait for work."""
+
+[[roles]]
+name = "qa"
+display_name = "QA"
+harness = "claude-code"
+responsibilities = """
+Test strategy, test implementation, feature verification. Owns the docker
+compose stack. Extends test coverage beyond spec requirements based on
+own analysis. Includes security verification. May commit small repairs
+directly when the intended behavior is unambiguous."""
+
+startup_prompt = """
+You are the QA agent. Call orientation() then subscribe to the channel.
+Post a status_update confirming you are online. Wait for work."""
+
+# -- Workflow --
+
+[workflow]
+description = """
+Work flows through agents in sequence, one feature at a time:
+Product --> Spec --> Implementation --> QA --> Product.
+Each handoff is a channel message mentioning the next agent.
+Product kicks off features, monitors for stalls, and merges to main."""
+
+pipeline = ["product", "spec", "implementation", "qa"]
+
+[workflow.threads]
+feature = "[FEATURE]"
+question = "[QUESTION]"
+git_request = "[GIT-REQUEST]"
+stack_request = "[STACK-REQUEST]"
+
+[workflow.handoff]
+method = "mention"
+includes = ["summary of work done", "what next agent needs to do", "files changed", "branch name"]
+
+# -- Git --
+
+[git]
+description = """
+Each agent works in a git worktree. Feature branches from main,
+agent branches from feature branch. Squash-merge features to main."""
+
+strategy = "worktree"
+feature_branch = "feat/{slug}"
+agent_branch = "{role}/{slug}"
+merge_to_main = "squash"
+
+[git.ownership]
+main_branch = "product"
+stack = "qa"
+
+# -- Resource ownership --
+
+[resources]
+description = """
+Shared resources have a single owner to avoid contention."""
+
+[resources.owners]
+git = "product"
+docker_stack = "qa"
