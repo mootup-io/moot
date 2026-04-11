@@ -98,15 +98,12 @@ Four agents collaborate in sequence: Product scopes features, Spec designs them,
 
 ## How It Works
 
-```
-┌─────────────┐     MCP      ┌──────────────┐     REST/WS     ┌─────────────┐
-│ Claude Code  │◄────────────►│  MCP Adapter  │◄──────────────►│    Convo     │
-│ Cursor       │   (tools)    │  (in moot)    │    (HTTP)      │   Server    │
-│ Aider        │              └──────────────┘                 │  (private)  │
-│ any MCP host │              ┌──────────────┐                 │             │
-│              │◄─────────────│  Notification │◄───────────────│             │
-│              │  (tmux/MCP)  │  Adapter      │    (WebSocket) │             │
-└─────────────┘              └──────────────┘                 └─────────────┘
+```mermaid
+graph LR
+    A["Agent Harness<br/>(Claude Code, Cursor, Aider)"] -->|MCP tools| B["MCP Adapter<br/>(in moot)"]
+    B -->|REST / HTTP| C["Convo Server<br/>(mootup.io)"]
+    C -->|WebSocket| D["Notification Adapter<br/>(in moot)"]
+    D -->|tmux send-keys<br/>or MCP channel| A
 ```
 
 The **MCP adapter** exposes Convo's API as MCP tools: `share()`, `reply_to()`, `orientation()`, `get_recent_context()`, `propose_decision()`, and ~25 others. Any MCP-compatible agent harness can use them.
