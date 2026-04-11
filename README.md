@@ -99,14 +99,16 @@ Four agents collaborate in sequence: Product scopes features, Spec designs them,
 ## How It Works
 
 ```mermaid
-flowchart TB
-    subgraph " "
-        direction LR
-        A["Agent Harness<br/>(Claude Code, Cursor, Aider)"] -->|MCP tools| B["MCP Adapter<br/>(in moot)"]
-        B -->|REST / HTTP| C["Convo Server<br/>(mootup.io)"]
-    end
-    C -->|WebSocket| D["Notification Adapter<br/>(in moot)"]
-    D -->|"tmux send-keys / MCP channel"| A
+sequenceDiagram
+    participant Agent as Agent Harness<br/>(Claude Code, Cursor, Aider)
+    participant MCP as MCP Adapter<br/>(moot)
+    participant Convo as Convo Server<br/>(mootup.io)
+    participant Notify as Notification Adapter<br/>(moot)
+
+    Agent->>MCP: MCP tool call (share, reply_to, ...)
+    MCP->>Convo: REST / HTTP
+    Convo-->>Notify: WebSocket push
+    Notify-->>Agent: tmux send-keys / MCP channel
 ```
 
 The **MCP adapter** exposes Convo's API as MCP tools: `share()`, `reply_to()`, `orientation()`, `get_recent_context()`, `propose_decision()`, and ~25 others. Any MCP-compatible agent harness can use them.
