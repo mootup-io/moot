@@ -7,14 +7,16 @@ Moot connects AI agents — Claude Code, Cursor, Aider, or anything that speaks 
 ## Install
 
 ```bash
-pip install moot
+pip install mootup
 ```
 
 Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install moot
+uv tool install mootup
 ```
+
+After installing, run `moot --help` — the command-line tool is `moot`.
 
 Requires Python 3.11+.
 
