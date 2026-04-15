@@ -1,0 +1,23 @@
+# Per-agent worktrees (created by ensure-worktree.sh / coclaude on demand)
+.worktrees/
+
+# Python build / test artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Editor / IDE state
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local environment / credentials
+.env
+.env.local
+.actors.json
+.moot/
