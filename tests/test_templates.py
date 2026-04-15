@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 import pytest
 
-from moot.scaffold import DEVCONTAINER_TEMPLATE_DIR, cmd_init
+from moot.scaffold import (
+    BUNDLED_SKILLS,
+    DEVCONTAINER_TEMPLATE_DIR,
+    SKILLS_TEMPLATE_DIR,
+)
 from moot.team_profile import (
     TEAMS_DIR,
     TeamProfile,
@@ -49,7 +53,7 @@ def test_runner_scripts_no_convo_paths() -> None:
     forbidden = [
         "/workspaces/convo",
         "convo-venv",
-        ".actors.json",
+        ".agents.json",  # post-Run-R: renamed to .moot/actors.json
         "gemoot.com",
     ]
     for script_name in ("run-moot-mcp.sh", "run-moot-channel.sh", "run-moot-notify.sh"):
@@ -64,16 +68,41 @@ def test_runner_scripts_no_convo_paths() -> None:
         )
 
 
-def test_runner_reads_agents_json() -> None:
-    """Runner scripts reference .agents.json (flat format), not .actors.json (nested)."""
+def test_runner_reads_actors_json() -> None:
+    """Runner scripts reference .moot/actors.json (nested shape), not .agents.json."""
     for script_name in ("run-moot-mcp.sh", "run-moot-channel.sh", "run-moot-notify.sh"):
         content = (DEVCONTAINER_TEMPLATE_DIR / script_name).read_text()
-        assert ".agents.json" in content, (
-            f"{script_name} should reference .agents.json"
+        assert ".moot/actors.json" in content, (
+            f"{script_name} should reference .moot/actors.json"
         )
-        assert ".actors.json" not in content, (
-            f"{script_name} should not reference .actors.json"
+        assert ".agents.json" not in content, (
+            f"{script_name} should not reference .agents.json"
         )
+        assert "data.get('actors'" in content, (
+            f"{script_name} should parse the nested actors.json schema"
+        )
+
+
+def test_skills_bundle_complete() -> None:
+    """All 7 bundled skills exist and contain no convo-specific strings."""
+    for skill in BUNDLED_SKILLS:
+        skill_md = SKILLS_TEMPLATE_DIR / skill / "SKILL.md"
+        assert skill_md.exists(), f"{skill}/SKILL.md missing from bundle"
+        content = skill_md.read_text()
+        forbidden = [
+            "/workspaces/convo",
+            "Pat",
+            "feedback_",
+            "Arch Run",
+            "agt_",
+            "evt_",
+            "spc_",
+            "docker exec convo-",
+        ]
+        for pattern in forbidden:
+            assert pattern not in content, (
+                f"{skill}/SKILL.md contains forbidden pattern: {pattern}"
+            )
 
 
 def test_devcontainer_no_convo_customizations() -> None:
@@ -95,7 +124,6 @@ def test_post_create_no_convo_paths() -> None:
         "/workspaces/convo",
         "convo-venv",
         "gemoot.com",
-        ".actors.json",
         "run-convo-",
         "SSL_CERT_FILE",
     ]
@@ -286,45 +314,6 @@ class TestClaudeMdGeneration:
         assert "TODO:" in content
 
 
-# -- Scaffold integration tests ------------------------------------------------
-
-
-class TestScaffoldIntegration:
-    def test_cmd_init_with_template(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Run cmd_init with template='loop-4'. Assert all files created."""
-        monkeypatch.chdir(tmp_path)
-
-        args = type("Args", (), {"api_url": None, "template": "loop-4", "roles": None})()
-        cmd_init(args)
-
-        assert (tmp_path / "moot.toml").exists()
-        assert (tmp_path / "CLAUDE.md").exists()
-        assert (tmp_path / ".gitignore").exists()
-        assert (tmp_path / ".devcontainer").is_dir()
-
-        # Verify moot.toml content
-        data = tomllib.loads((tmp_path / "moot.toml").read_text())
-        assert data["convo"]["template"] == "loop-4"
-        assert len(data["agents"]) == 4
-
-        # Verify CLAUDE.md has content
-        claude = (tmp_path / "CLAUDE.md").read_text()
-        assert "TODO:" in claude
-        assert "4 agents" in claude
-
-    def test_cmd_init_default_template(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Run cmd_init without template arg. Assert defaults to loop-4."""
-        monkeypatch.chdir(tmp_path)
-
-        args = type("Args", (), {"api_url": None, "template": None, "roles": None})()
-        cmd_init(args)
-
-        assert (tmp_path / "moot.toml").exists()
-        data = tomllib.loads((tmp_path / "moot.toml").read_text())
-        assert data["convo"]["template"] == "loop-4"
-        assert len(data["agents"]) == 4
-
-
 # -- QA coverage tests ---------------------------------------------------------
 
 
@@ -375,28 +364,6 @@ class TestTeamTemplatesQA:
         librarian = [r for r in profile.roles if r.name == "librarian"][0]
         assert librarian.harness == "cursor"
 
-    def test_existing_moot_toml_not_overwritten(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """cmd_init does not overwrite existing moot.toml."""
-        monkeypatch.chdir(tmp_path)
-        original = "[convo]\napi_url = \"https://custom.example.com\"\n"
-        (tmp_path / "moot.toml").write_text(original)
-
-        args = type("Args", (), {"api_url": None, "template": "loop-4", "roles": None})()
-        cmd_init(args)
-
-        assert (tmp_path / "moot.toml").read_text() == original
-
-    def test_existing_claude_md_not_overwritten(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """cmd_init does not overwrite existing CLAUDE.md."""
-        monkeypatch.chdir(tmp_path)
-        original = "# My Custom Project\n\nCustom instructions here.\n"
-        (tmp_path / "CLAUDE.md").write_text(original)
-
-        args = type("Args", (), {"api_url": None, "template": "loop-4", "roles": None})()
-        cmd_init(args)
-
-        assert (tmp_path / "CLAUDE.md").read_text() == original
-
     def test_resolver_error_lists_available_templates(self) -> None:
         """FileNotFoundError from resolve_template includes all 5 template names."""
         with pytest.raises(FileNotFoundError, match="Available:") as exc_info:
@@ -431,17 +398,3 @@ class TestTeamTemplatesQA:
         assert "leader" in data["agents"]
         assert "implementation" in data["agents"]
         assert "qa" in data["agents"]
-
-    def test_cmd_init_with_loop3(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """cmd_init with --template loop-3 produces 3-role moot.toml."""
-        monkeypatch.chdir(tmp_path)
-        args = type("Args", (), {"api_url": None, "template": "loop-3", "roles": None})()
-        cmd_init(args)
-
-        data = tomllib.loads((tmp_path / "moot.toml").read_text())
-        assert data["convo"]["template"] == "loop-3"
-        assert len(data["agents"]) == 3
-
-        claude = (tmp_path / "CLAUDE.md").read_text()
-        assert "3 agents" in claude
-        assert "Leader" in claude

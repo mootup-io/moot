@@ -1,9 +1,9 @@
 #!/bin/bash
 # Channel adapter wrapper — reads CONVO_ROLE and looks up API key
-# from .agents.json. Same logic as run-moot-mcp.sh.
+# from .moot/actors.json. Same logic as run-moot-mcp.sh.
 
 ROLE="${CONVO_ROLE:-implementation}"
-AGENTS_FILE=".agents.json"
+ACTORS_FILE=".moot/actors.json"
 
 # Find project root (walk up to moot.toml)
 PROJECT_ROOT="$(pwd)"
@@ -12,18 +12,19 @@ while [ "$PROJECT_ROOT" != "/" ]; do
     PROJECT_ROOT="$(dirname "$PROJECT_ROOT")"
 done
 
-# Read API key from .agents.json
-if [ -f "$PROJECT_ROOT/$AGENTS_FILE" ]; then
+# Read API key from .moot/actors.json (nested schema)
+if [ -f "$PROJECT_ROOT/$ACTORS_FILE" ]; then
     KEY=$(python3 -c "
-import json, sys
-with open('$PROJECT_ROOT/$AGENTS_FILE') as f:
-    keys = json.load(f)
-print(keys.get('$ROLE', ''))
+import json
+with open('$PROJECT_ROOT/$ACTORS_FILE') as f:
+    data = json.load(f)
+entry = data.get('actors', {}).get('$ROLE', {})
+print(entry.get('api_key', ''))
 " 2>/dev/null)
     if [ -n "$KEY" ]; then
         export CONVO_API_KEY="$KEY"
     else
-        echo "WARNING: No API key for role '$ROLE' in $AGENTS_FILE" >&2
+        echo "WARNING: No API key for role '$ROLE' in $ACTORS_FILE" >&2
     fi
 fi
 

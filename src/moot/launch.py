@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from moot.config import find_config, load_agent_keys
+from moot.config import find_config, get_actor_key
 
 
 def _ensure_worktree(role: str) -> Path:
@@ -52,8 +52,7 @@ def cmd_exec(args: object) -> None:
 
     worktree = _ensure_worktree(role)
     agent_config = config.agents[role]
-    keys = load_agent_keys()
-    api_key = keys.get(role, "")
+    api_key = get_actor_key(role)
 
     prompt = prompt_override or agent_config.startup_prompt
 

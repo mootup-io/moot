@@ -1,3 +1,4 @@
+"""moot.toml and .moot/actors.json loaders."""
 from __future__ import annotations
 
 import json
@@ -6,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 MOOT_TOML = "moot.toml"
-AGENTS_JSON = ".agents.json"
+MOOT_DIR = ".moot"
+ACTORS_JSON = f"{MOOT_DIR}/actors.json"
 
 
 class AgentConfig:
@@ -25,7 +27,7 @@ class MootConfig:
         with open(path, "rb") as f:
             data = tomllib.load(f)
         convo = data.get("convo", {})
-        self.api_url: str = convo.get("api_url", "https://gemoot.com:8443")
+        self.api_url: str = convo.get("api_url", "https://mootup.io")
         self.space_id: str | None = convo.get("space_id")
         harness = data.get("harness", {})
         self.harness_type: str = harness.get("type", "claude-code")
@@ -50,13 +52,37 @@ def find_config() -> MootConfig | None:
     return None
 
 
-def load_agent_keys() -> dict[str, str]:
-    """Load agent API keys from .agents.json."""
-    path = Path(AGENTS_JSON)
+def load_actors() -> dict[str, Any] | None:
+    """Load .moot/actors.json; returns None if missing."""
+    path = Path(ACTORS_JSON)
     if not path.exists():
-        return {}
-    with open(path) as f:
-        return json.load(f)
+        return None
+    return json.loads(path.read_text())
+
+
+def get_actor_key(role: str) -> str:
+    """Return the API key for a role from .moot/actors.json, or ''."""
+    data = load_actors()
+    if not data:
+        return ""
+    actors = data.get("actors", {})
+    entry = actors.get(role) or actors.get(role.lower()) or {}
+    return entry.get("api_key", "")
+
+
+def load_agent_keys() -> dict[str, str]:
+    """Legacy shim: return {role: key} from .moot/actors.json OR .agents.json.
+
+    Kept for the legacy provision path; the new adoption flow uses
+    load_actors() / get_actor_key() directly.
+    """
+    new = load_actors()
+    if new:
+        return {k: v.get("api_key", "") for k, v in new.get("actors", {}).items()}
+    legacy = Path(".agents.json")
+    if legacy.exists():
+        return json.loads(legacy.read_text())
+    return {}
 
 
 def cmd_config(args: object) -> None:

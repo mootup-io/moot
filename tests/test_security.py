@@ -5,8 +5,10 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
 
-def test_credential_file_not_world_readable(tmp_path: Path, monkeypatch) -> None:
+
+def test_credential_file_not_world_readable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Credentials file must be mode 600 (owner read/write only)."""
     import moot.auth as auth_mod
 
@@ -29,24 +31,24 @@ def test_credential_file_not_world_readable(tmp_path: Path, monkeypatch) -> None
     assert mode & stat.S_IWOTH == 0, "Other write not allowed"
 
 
-def test_scaffold_gitignores_secrets(tmp_path: Path, monkeypatch) -> None:
-    """moot init adds .agents.json to .gitignore to prevent committing secrets."""
+def test_scaffold_gitignores_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_update_gitignore adds .moot/ and .agents.json entries to prevent committing secrets."""
     monkeypatch.chdir(tmp_path)
+    from moot.scaffold import _update_gitignore
 
-    class FakeArgs:
-        api_url = None
-        roles = None
-
-    from moot.scaffold import cmd_init
-
-    cmd_init(FakeArgs())
+    _update_gitignore()
 
     gitignore = (tmp_path / ".gitignore").read_text()
-    assert ".agents.json" in gitignore, "Agent keys file must be gitignored"
+    assert ".moot/" in gitignore, ".moot/ directory must be gitignored (contains actors.json)"
+    assert ".agents.json" in gitignore, "legacy .agents.json still gitignored for --fresh path"
     assert ".env.local" in gitignore, "Local env must be gitignored"
 
 
-def test_credential_overwrite_preserves_mode(tmp_path: Path, monkeypatch) -> None:
+def test_credential_overwrite_preserves_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Storing a second credential doesn't loosen file permissions."""
     import moot.auth as auth_mod
 

@@ -30,13 +30,45 @@ def main() -> None:
     login_p.add_argument("--api-url", default=None, help="Moot API URL")
 
     # moot init
-    init_p = sub.add_parser("init", help="Scaffold project for agent team")
-    init_p.add_argument("--api-url", default=None)
-    init_p.add_argument("--roles", default=None, help="Comma-separated roles")
+    init_p = sub.add_parser(
+        "init",
+        help="Provision agents and install Moot workflow bundles",
+    )
+    init_p.add_argument(
+        "--api-url", default=None, help="Moot API URL (overrides credential)"
+    )
+    init_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Rotate keys for already-adopted agents (destructive)",
+    )
+    init_p.add_argument(
+        "--update-suggestions",
+        action="store_true",
+        help="Refresh .moot/suggested-*/ from bundled templates; no key rotation",
+    )
+    init_p.add_argument(
+        "--adopt-fresh-install",
+        action="store_true",
+        help="Overwrite CLAUDE.md / .claude/skills/ / .devcontainer/ unconditionally",
+    )
+    init_p.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Legacy path: create new agents in a new tenant",
+    )
+    init_p.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        help="Skip all confirmation prompts",
+    )
+    init_p.add_argument(
+        "--roles", default=None, help="Comma-separated roles (--fresh only)"
+    )
     init_p.add_argument(
         "--template", "-t",
         default=None,
-        help="Team template name or path (default: loop-4). Built-in: loop-3, loop-4, loop-4-observer, loop-4-parallel, loop-4-split-leader",
+        help="Team template name (--fresh only). Built-in: loop-3, loop-4, loop-4-observer, loop-4-parallel, loop-4-split-leader",
     )
 
     # moot config
@@ -46,7 +78,12 @@ def main() -> None:
     set_p = config_sub.add_parser("set", help="Set a config value")
     set_p.add_argument("key")
     set_p.add_argument("value")
-    config_sub.add_parser("provision", help="Register actors, write .agents.json")
+    prov_p = config_sub.add_parser("provision", help="Register actors")
+    prov_p.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Create new agents in a new tenant (writes .moot/agents-fresh.json)",
+    )
     focus_p = config_sub.add_parser("focus", help="Set focus space")
     focus_p.add_argument("space_id")
 

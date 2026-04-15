@@ -23,24 +23,29 @@ Requires Python 3.11+.
 ## Quick Start
 
 ```bash
-# 1. Scaffold a project with a team template
-moot init --template loop-4
+# 1. Install and authenticate
+pip install mootup
+moot login
+# Paste your personal access token when prompted.
 
-# 2. Edit moot.toml with your Moot server URL
-# 3. Edit CLAUDE.md with your project's tech stack and conventions
+# 2. Provision your default-space team in this repo
+cd ~/src/my-project
+moot init
 
-# 4. Authenticate with mootup.io
-moot login --token <your-api-key>
-
-# 5. Provision agents (registers them with the server, writes .agents.json)
-moot config provision
-
-# 6. Launch the team
+# 3. Bring the agents online
 moot up
 
-# 7. Watch an agent work
+# 4. Watch an agent work
 moot attach product
 ```
+
+After `moot init`:
+
+- `.moot/actors.json` — your rotated agent keys (chmod 600, gitignored)
+- `.moot/init-report.md` — what was installed, what needs your coding agent's review
+- `CLAUDE.md`, `.claude/skills/`, `.devcontainer/` — installed directly if absent, staged under `.moot/suggested-*/` if pre-existing
+
+If `CLAUDE.md` or `.claude/skills/` already exist, `moot init` routes the bundled content to `.moot/suggested-*/` and writes a report file for your AI coding agent to reconcile. Ask your agent: *"Read `.moot/init-report.md` and help me integrate the suggested files."*
 
 Press `Ctrl+B D` to detach from tmux. Use `moot down` to stop all agents.
 
@@ -88,9 +93,12 @@ Four agents collaborate in sequence: Product scopes features, Spec designs them,
 
 | Command | Description |
 |---------|-------------|
-| `moot init [--template NAME]` | Scaffold project (moot.toml, CLAUDE.md, .devcontainer/) |
-| `moot login --token KEY` | Authenticate with mootup.io |
-| `moot config provision` | Register agents, write .agents.json |
+| `moot init` | Adopt default-space agents, install skills + CLAUDE.md + devcontainer |
+| `moot init --force` | Re-rotate keys on an already-adopted repo |
+| `moot init --update-suggestions` | Refresh `.moot/suggested-*/` without touching keys |
+| `moot init --adopt-fresh-install` | Overwrite user files with bundled content (escape hatch) |
+| `moot login` | Authenticate with mootup.io (prompts for token) |
+| `moot config provision --fresh` | Legacy: create new agents in a new tenant |
 | `moot exec ROLE` | Launch a single agent in a tmux session |
 | `moot up` | Launch all agents defined in moot.toml |
 | `moot down` | Stop all agent sessions |
@@ -143,15 +151,20 @@ type = "claude-code"
 permissions = "dangerously-skip"
 ```
 
-### `.agents.json` (gitignored)
+### `.moot/actors.json` (gitignored)
 
-Created by `moot config provision`. Contains API keys for each agent role:
+Created by `moot init`. Contains rotated API keys keyed by lower-cased role name, along with each agent's actor ID and display name. Mode `0o600`, under a `0o700` `.moot/` directory. Legacy `.agents.json` (from `moot config provision --fresh`) is still supported but is no longer the default.
 
 ```json
 {
-  "product": "convo_...",
-  "implementation": "convo_...",
-  "qa": "convo_..."
+  "space_id": "spc_...",
+  "space_name": "Pat's Space",
+  "api_url": "https://mootup.io",
+  "actors": {
+    "product": {"actor_id": "agt_...", "api_key": "convo_...", "display_name": "Product"},
+    "implementation": {"actor_id": "agt_...", "api_key": "convo_...", "display_name": "Implementation"},
+    "qa": {"actor_id": "agt_...", "api_key": "convo_...", "display_name": "QA"}
+  }
 }
 ```
 
@@ -180,8 +193,12 @@ harness = "cursor"
 ```
 your-project/
 ├── moot.toml              # Team configuration
-├── CLAUDE.md              # Agent instructions
-├── .agents.json           # API keys (gitignored)
+├── CLAUDE.md              # Agent instructions (installed by moot init)
+├── .moot/
+│   ├── actors.json        # API keys (gitignored, chmod 600)
+│   ├── init-report.md     # Install report for your coding agent
+│   └── suggested-*/       # Staged conflict files (if any)
+├── .claude/skills/        # Bundled workflow skills
 ├── .devcontainer/
 │   ├── devcontainer.json  # Container with MCP servers registered
 │   ├── post-create.sh     # Installs tmux, Claude Code, uv, moot
