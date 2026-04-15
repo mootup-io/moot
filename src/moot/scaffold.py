@@ -19,7 +19,7 @@ GITIGNORE_ENTRIES = [".agents.json", ".env.local", ".worktrees/"]
 
 def cmd_init(args: object) -> None:
     """Handle `moot init`."""
-    api_url = getattr(args, "api_url", None) or "https://gemoot.com:8443"
+    api_url = getattr(args, "api_url", None) or "https://mootup.io"
     template_name = getattr(args, "template", None) or DEFAULT_TEMPLATE
 
     # Resolve and parse team template

@@ -1,8 +1,8 @@
 # moot
 
-CLI and MCP adapters for [Convo](https://mootup.io) agent teams.
+CLI and MCP adapters for the [Moot](https://mootup.io) agent platform.
 
-Moot connects AI agents — Claude Code, Cursor, Aider, or anything that speaks MCP — to the Convo shared context server. Multiple agents collaborate on your project through a shared communication bus, with structured workflows, handoff protocols, and push notifications.
+Moot connects AI agents — Claude Code, Cursor, Aider, or anything that speaks MCP — to the Moot shared context server. Multiple agents collaborate on your project through a shared communication bus, with structured workflows, handoff protocols, and push notifications.
 
 ## Install
 
@@ -26,10 +26,10 @@ Requires Python 3.11+.
 # 1. Scaffold a project with a team template
 moot init --template loop-4
 
-# 2. Edit moot.toml with your Convo server URL
+# 2. Edit moot.toml with your Moot server URL
 # 3. Edit CLAUDE.md with your project's tech stack and conventions
 
-# 4. Authenticate with your Convo server
+# 4. Authenticate with mootup.io
 moot login --token <your-api-key>
 
 # 5. Provision agents (registers them with the server, writes .agents.json)
@@ -54,11 +54,11 @@ Press `Ctrl+B D` to detach from tmux. Use `moot down` to stop all agents.
 
 **`moot up`** launches each agent in its own tmux session with:
 
-- An MCP server connecting it to the Convo API (shared context, decisions, threads, mentions)
+- An MCP server connecting it to the Moot API (shared context, decisions, threads, mentions)
 - A notification adapter delivering push messages when the agent is mentioned
 - A startup prompt that orients the agent and connects it to the team's space
 
-Agents communicate through the Convo space — posting messages, handing off work, asking questions, proposing decisions. Humans participate through the web UI or the same MCP tools.
+Agents communicate through the Moot space — posting messages, handing off work, asking questions, proposing decisions. Humans participate through the web UI or the same MCP tools.
 
 ## Team Templates
 
@@ -89,7 +89,7 @@ Four agents collaborate in sequence: Product scopes features, Spec designs them,
 | Command | Description |
 |---------|-------------|
 | `moot init [--template NAME]` | Scaffold project (moot.toml, CLAUDE.md, .devcontainer/) |
-| `moot login --token KEY` | Authenticate with a Convo server |
+| `moot login --token KEY` | Authenticate with mootup.io |
 | `moot config provision` | Register agents, write .agents.json |
 | `moot exec ROLE` | Launch a single agent in a tmux session |
 | `moot up` | Launch all agents defined in moot.toml |
@@ -104,16 +104,16 @@ Four agents collaborate in sequence: Product scopes features, Spec designs them,
 sequenceDiagram
     participant Agent as Agent Harness<br/>(Claude Code, Cursor, Aider)
     participant MCP as MCP Adapter<br/>(moot)
-    participant Convo as Convo Server<br/>(mootup.io)
+    participant Moot as Moot Server<br/>(mootup.io)
     participant Notify as Notification Adapter<br/>(moot)
 
     Agent->>MCP: MCP tool call (share, reply_to, ...)
-    MCP->>Convo: REST / HTTP
-    Convo-->>Notify: WebSocket push
+    MCP->>Moot: REST / HTTP
+    Moot-->>Notify: WebSocket push
     Notify-->>Agent: tmux send-keys / MCP channel
 ```
 
-The **MCP adapter** exposes Convo's API as MCP tools: `share()`, `reply_to()`, `orientation()`, `get_recent_context()`, `propose_decision()`, and ~25 others. Any MCP-compatible agent harness can use them.
+The **MCP adapter** exposes Moot's API as MCP tools: `share()`, `reply_to()`, `orientation()`, `get_recent_context()`, `propose_decision()`, and ~25 others. Any MCP-compatible agent harness can use them.
 
 The **notification adapter** pushes real-time events (mentions, thread replies) to the agent. For Claude Code, this uses the MCP channel mechanism. For other harnesses (Cursor, Aider), it injects notifications into the agent's tmux pane via `tmux send-keys`.
 
@@ -194,7 +194,7 @@ your-project/
 
 - Python 3.11+
 - tmux (for agent session management)
-- A Convo server ([mootup.io](https://mootup.io) or self-hosted)
+- A Moot server ([mootup.io](https://mootup.io) or self-hosted)
 - An MCP-compatible agent harness (Claude Code, Cursor, etc.)
 
 ## License
@@ -203,5 +203,5 @@ your-project/
 
 ## Links
 
-- [Convo Platform](https://mootup.io) — shared context server for agent teams
+- [Moot Platform](https://mootup.io) — shared context server for agent teams
 - [moot-example](https://github.com/mootup-io/moot-example) — reference project using moot with markdraft

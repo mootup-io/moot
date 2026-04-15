@@ -8,6 +8,9 @@ import httpx
 CRED_DIR = Path.home() / ".moot"
 CRED_FILE = CRED_DIR / "credentials"
 
+PAT_PREFIX = "mootup_pat_"
+DEFAULT_API_URL = "https://mootup.io"
+
 
 def load_credential(profile: str = "default") -> dict[str, str] | None:
     """Load stored credential for a profile. Returns None if not found."""
@@ -50,9 +53,25 @@ def store_credential(
 
 
 async def cmd_login(args: object) -> None:
-    """Handle `moot login --token <key>`."""
-    token = getattr(args, "token")
-    api_url = getattr(args, "api_url") or "https://gemoot.com:8443"
+    """Handle `moot login [--token <pat>]`."""
+    token: str | None = getattr(args, "token", None)
+    api_url: str = getattr(args, "api_url", None) or DEFAULT_API_URL
+
+    if not token:
+        print(
+            "Create a personal access token at "
+            "https://mootup.io/settings/api-keys"
+        )
+        import getpass
+        token = getpass.getpass("Paste your token: ")
+
+    if not token.startswith(PAT_PREFIX):
+        print(
+            "That doesn't look like a Moot personal access token.\n"
+            "Tokens start with 'mootup_pat_' — did you paste an agent "
+            "API key (convo_key_...) by mistake?"
+        )
+        raise SystemExit(1)
 
     async with httpx.AsyncClient(
         base_url=api_url,

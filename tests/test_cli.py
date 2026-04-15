@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tomllib
+from pathlib import Path
 
 
 def test_cli_help_text() -> None:
@@ -13,7 +15,48 @@ def test_cli_help_text() -> None:
         text=True,
     )
     assert result.returncode == 0
-    assert "Scaffold and run Convo agent teams" in result.stdout
+    assert "Scaffold and run Moot agent teams" in result.stdout
+
+
+def test_cli_version_flag() -> None:
+    """moot --version prints 'moot <version>' and exits 0."""
+    from moot import __version__
+    result = subprocess.run(
+        [sys.executable, "-m", "moot", "--version"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    # argparse writes `%(prog)s <version>` — prog is "moot".
+    # argparse may write to stdout or stderr depending on Python version.
+    combined = result.stdout + result.stderr
+    assert f"moot {__version__}" in combined
+
+
+def test_cli_help_no_convo_branding() -> None:
+    """User-facing help text does not contain 'Convo' (the old brand)."""
+    result = subprocess.run(
+        [sys.executable, "-m", "moot", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "Convo" not in result.stdout, (
+        f"Expected 'Convo' to be absent from --help; got:\n{result.stdout}"
+    )
+
+
+def test_version_consistency() -> None:
+    """__version__ in package matches pyproject.toml [project].version."""
+    from moot import __version__
+
+    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    with open(pyproject, "rb") as f:
+        data = tomllib.load(f)
+    assert data["project"]["version"] == __version__, (
+        f"pyproject.toml version ({data['project']['version']}) does not "
+        f"match moot.__version__ ({__version__})"
+    )
 
 
 def test_cli_subcommands_help() -> None:

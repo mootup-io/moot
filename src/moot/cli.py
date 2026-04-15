@@ -1,22 +1,33 @@
-"""moot CLI — scaffold and run Convo agent teams."""
+"""moot CLI — scaffold and run Moot agent teams."""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import sys
 
+from moot import __version__
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="moot",
-        description="Scaffold and run Convo agent teams",
+        description="Scaffold and run Moot agent teams",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     sub = parser.add_subparsers(dest="command")
 
     # moot login
-    login_p = sub.add_parser("login", help="Authenticate with Convo API")
-    login_p.add_argument("--token", required=True, help="API key")
-    login_p.add_argument("--api-url", default=None, help="Convo API URL")
+    login_p = sub.add_parser("login", help="Authenticate against mootup.io")
+    login_p.add_argument(
+        "--token",
+        default=None,
+        help="Personal access token (prompts interactively if omitted)",
+    )
+    login_p.add_argument("--api-url", default=None, help="Moot API URL")
 
     # moot init
     init_p = sub.add_parser("init", help="Scaffold project for agent team")
