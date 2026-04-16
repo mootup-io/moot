@@ -132,7 +132,7 @@ async def _cmd_init_async(args: object) -> None:
     )
     print(f"Wrote {ACTORS_JSON}              ({len(adopted)} agents, chmod 600)")
 
-    _write_moot_toml_from_adopted(adopted=adopted, api_url=api_url)
+    _write_moot_toml_from_adopted(adopted=adopted, api_url=api_url, force=force)
 
     _update_gitignore()
 
@@ -272,10 +272,21 @@ def _write_moot_toml_from_adopted(
     *,
     adopted: dict[str, dict[str, str]],
     api_url: str,
+    force: bool = False,
 ) -> None:
-    """Generate moot.toml from adopted team data (D-TOML)."""
+    """Generate moot.toml from adopted team data (D-TOML).
+
+    If moot.toml exists, refuse to overwrite unless `force=True`. Print the
+    skip explicitly so a user re-running `moot init` (without --force) can see
+    that the existing toml was preserved — silent skip surprised users who
+    expected the agent list to update after a key rotation.
+    """
     toml_path = Path("moot.toml")
-    if toml_path.exists():
+    if toml_path.exists() and not force:
+        print(
+            f"Skipped moot.toml              (exists; "
+            f"re-run with --force to overwrite)"
+        )
         return
     team_name = _infer_team_template(list(adopted.keys()))
     profile = TeamProfile(
