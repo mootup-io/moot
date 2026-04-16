@@ -87,7 +87,14 @@ def test_cli_no_command_exits_nonzero() -> None:
     assert result.returncode != 0
 
 
-def test_cli_version_importable() -> None:
-    """Package version is importable."""
+def test_cli_version_matches_pyproject() -> None:
+    """__version__ in package matches pyproject.toml [project].version."""
     from moot import __version__
-    assert __version__ == "0.1.0"
+
+    pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    with open(pyproject, "rb") as f:
+        data = tomllib.load(f)
+    assert data["project"]["version"] == __version__, (
+        f"pyproject.toml version ({data['project']['version']}) does not "
+        f"match moot.__version__ ({__version__})"
+    )

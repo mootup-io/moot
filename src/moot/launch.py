@@ -1,38 +1,132 @@
+"""Launch Claude agents in tmux sessions inside the bundled devcontainer."""
 from __future__ import annotations
 
-import subprocess
+import shlex
 from pathlib import Path
 
-from moot.config import find_config, get_actor_key
-
-
-def _ensure_worktree(role: str) -> Path:
-    """Create git worktree for role if it doesn't exist."""
-    wt_path = Path(f".worktrees/{role}")
-    if wt_path.exists():
-        return wt_path
-    subprocess.run(
-        ["git", "worktree", "add", str(wt_path), "main"],
-        check=True,
-        capture_output=True,
-    )
-    return wt_path
+from moot.config import MootConfig, find_config, get_actor_key
+from moot.devcontainer import (
+    container_id_or_none,
+    exec_capture,
+    exec_detached,
+    up,
+)
 
 
 def _session_name(role: str) -> str:
     return f"moot-{role}"
 
 
-def _session_exists(role: str) -> bool:
-    result = subprocess.run(
+def _session_exists(container_id: str, role: str) -> bool:
+    """True if a tmux session for `role` exists inside the container."""
+    rc, _stdout, _stderr = exec_capture(
+        container_id,
         ["tmux", "has-session", "-t", _session_name(role)],
-        capture_output=True,
     )
-    return result.returncode == 0
+    return rc == 0
+
+
+def _ensure_worktree(container_id: str, project: str, role: str) -> str:
+    """Ensure `.worktrees/<role>` exists in the bind-mounted workspace.
+
+    Returns the in-container worktree path. The devcontainer CLI mounts
+    the host workspace at /workspaces/{cwd.name}; git worktrees created
+    inside the container are visible on the host via the bind mount,
+    but the agent runs git ops inside the container where paths resolve
+    consistently.
+    """
+    wt_path = f"/workspaces/{project}/.worktrees/{role}"
+    rc, _stdout, _stderr = exec_capture(
+        container_id,
+        ["test", "-d", wt_path],
+    )
+    if rc == 0:
+        return wt_path
+    rc, _stdout, stderr = exec_capture(
+        container_id,
+        [
+            "bash", "-c",
+            f"cd /workspaces/{shlex.quote(project)} && "
+            f"git worktree add {shlex.quote(wt_path)} main",
+        ],
+    )
+    if rc != 0:
+        raise RuntimeError(
+            f"failed to create worktree {wt_path!r}: {stderr.strip()}"
+        )
+    return wt_path
+
+
+def _launch_role(
+    container_id: str,
+    config: MootConfig,
+    role: str,
+    prompt_override: str | None,
+) -> None:
+    """Launch a single role into a tmux session inside the container.
+
+    Assumes `container_id` is a running devcontainer for the current
+    workspace. Returns silently if the session is already running.
+    Called by both cmd_exec (single role) and cmd_up (loop).
+    """
+    session = _session_name(role)
+    if _session_exists(container_id, role):
+        print(f"Session {session} already running in {container_id[:12]}")
+        return
+
+    project = Path.cwd().name
+    wt_path = _ensure_worktree(container_id, project, role)
+
+    agent_config = config.agents[role]
+    api_key = get_actor_key(role)
+    prompt = prompt_override or agent_config.startup_prompt
+
+    # The claude command is built INLINE (per D2). The two literal strings
+    # '--dangerously-load-development-channels' and 'server:convo-channel'
+    # ALSO appear in cmd_exec's docstring as an anchor for the existing
+    # inspect.getsource-based test (test_launch_includes_channel_flag).
+    match config.harness_type:
+        case "claude-code":
+            claude_cmd = (
+                "claude --dangerously-skip-permissions "
+                "--dangerously-load-development-channels server:convo-channel "
+                f"-p {shlex.quote(prompt)}"
+            )
+        case _:
+            print(f"Error: harness '{config.harness_type}' not yet supported")
+            raise SystemExit(1)
+
+    tmux_cmd = (
+        f"tmux new-session -d -s {shlex.quote(session)} "
+        f"-c {shlex.quote(wt_path)} "
+        f"-- {claude_cmd}"
+    )
+
+    env: dict[str, str] = {
+        "CONVO_ROLE": role,
+        "CONVO_API_URL": config.api_url,
+    }
+    if api_key:
+        env["CONVO_API_KEY"] = api_key
+
+    rc, _stdout, stderr = exec_capture(
+        container_id,
+        ["bash", "-c", tmux_cmd],
+        env=env,
+    )
+    if rc != 0:
+        print(f"Error launching {role}: {stderr.strip()}")
+        raise SystemExit(1)
+    print(f"Launched {role} in {session} (container {container_id[:12]}, {wt_path})")
 
 
 def cmd_exec(args: object) -> None:
-    """Launch a single agent."""
+    """Launch a single agent.
+
+    The two literal strings below are the `test_launch_includes_channel_flag`
+    anchor — keep them in cmd_exec's textual source:
+        --dangerously-load-development-channels server:convo-channel
+    """
     role = getattr(args, "role")
     prompt_override = getattr(args, "prompt", None)
 
@@ -45,83 +139,58 @@ def cmd_exec(args: object) -> None:
         print(f"Error: unknown role '{role}'. Available: {', '.join(config.roles)}")
         raise SystemExit(1)
 
-    session = _session_name(role)
-    if _session_exists(role):
-        print(f"Session {session} already running")
-        return
-
-    worktree = _ensure_worktree(role)
-    agent_config = config.agents[role]
-    api_key = get_actor_key(role)
-
-    prompt = prompt_override or agent_config.startup_prompt
-
-    # Create tmux session
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session, "-c", str(worktree)],
-        check=True,
-    )
-
-    # Set environment in the session
-    for var, val in [
-        ("CONVO_ROLE", role),
-        ("CONVO_API_KEY", api_key),
-        ("CONVO_API_URL", config.api_url),
-    ]:
-        if val:
-            subprocess.run(
-                ["tmux", "send-keys", "-t", session, f"export {var}={val}", "Enter"],
-            )
-
-    # Launch Claude Code
-    match config.harness_type:
-        case "claude-code":
-            cmd = f"claude --dangerously-skip-permissions --dangerously-load-development-channels server:convo-channel -p '{prompt}'"
-        case _:
-            print(f"Error: harness '{config.harness_type}' not yet supported")
-            raise SystemExit(1)
-
-    subprocess.run(["tmux", "send-keys", "-t", session, cmd, "Enter"])
-    print(f"Launched {role} in {session} (worktree: {worktree})")
+    container_id = up(Path.cwd())
+    _launch_role(container_id, config, role, prompt_override)
 
 
 def cmd_up(args: object) -> None:
-    """Start all (or selected) agents."""
+    """Start all (or selected) agents. Boots the container once."""
     config = find_config()
     if not config:
         print("Error: no moot.toml found. Run 'moot init' first.")
         raise SystemExit(1)
 
     only = getattr(args, "only", None)
-    roles = only.split(",") if only else config.roles
+    roles: list[str] = only.split(",") if only else config.roles
 
+    container_id = up(Path.cwd())
     for role in roles:
         if role not in config.agents:
             print(f"Warning: unknown role '{role}', skipping")
             continue
-        # Reuse exec logic
-        class FakeArgs:
-            pass
-        fake = FakeArgs()
-        fake.role = role  # type: ignore[attr-defined]
-        fake.prompt = None  # type: ignore[attr-defined]
-        cmd_exec(fake)
+        _launch_role(container_id, config, role, prompt_override=None)
 
 
 def cmd_down(args: object) -> None:
-    """Stop agents by killing tmux sessions."""
+    """Stop agent tmux sessions inside the devcontainer.
+
+    Does NOT stop the devcontainer itself — a user who wants to fully
+    shut it down runs `docker stop <container>` manually. That's a
+    future `moot container down` concern, out of this run's scope.
+    """
     config = find_config()
     if not config:
         print("Error: no moot.toml found. Run 'moot init' first.")
         raise SystemExit(1)
+
+    container_id = container_id_or_none(Path.cwd())
+    if container_id is None:
+        print("No devcontainer running for this workspace.")
+        return
 
     role = getattr(args, "role", None)
     roles = [role] if role else config.roles
 
     for r in roles:
         session = _session_name(r)
-        if _session_exists(r):
-            subprocess.run(["tmux", "kill-session", "-t", session])
-            print(f"Stopped {session}")
+        if _session_exists(container_id, r):
+            rc, _stdout, _stderr = exec_capture(
+                container_id,
+                ["tmux", "kill-session", "-t", session],
+            )
+            if rc == 0:
+                print(f"Stopped {session}")
+            else:
+                print(f"Warning: tmux kill-session -t {session} returned rc={rc}")
         else:
             print(f"{session} not running")
