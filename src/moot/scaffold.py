@@ -96,7 +96,7 @@ async def _cmd_init_async(args: object) -> None:
         actor, space_id, space_name = await _fetch_actor_and_space(client)
         print(f"Fetched your default space: {space_id} ({space_name})")
 
-        keyless = await _fetch_keyless_agents(client, space_id)
+        keyless = await _fetch_keyless_agents(client)
         if not keyless and not force:
             print(
                 "Error: no keyless agents found in your default space.\n"
@@ -182,19 +182,23 @@ async def _fetch_actor_and_space(
 
 
 async def _fetch_keyless_agents(
-    client: httpx.AsyncClient, space_id: str
+    client: httpx.AsyncClient,
 ) -> list[dict[str, Any]]:
-    """List the user's sponsored agents and filter to the keyless ones in the
-    user's default space.
+    """List the user's sponsored agents and filter to the keyless ones.
 
     Originally called /api/spaces/{id}/participants, which returns Participant
     objects (`name`, `participant_id`, no `api_key_prefix`). The downstream
     code (display loop, _rotate_keys) reads `display_name`, `actor_id`, and
     relied on `api_key_prefix` for the keyless filter — those are Actor fields,
-    not Participant fields. Result: the keyless filter never narrowed and the
-    display loop crashed with KeyError('display_name'). Switching to
-    /api/actors/me/agents returns Actor dicts whose shape matches what the
-    rest of moot init expects.
+    not Participant fields. Switching to /api/actors/me/agents returns Actor
+    dicts whose shape matches what the rest of moot init expects.
+
+    No space scoping: `default_space_id` lives on the human user (set by
+    backend/core/onboarding/service.py during onboarding) and is `None` for
+    agents, so filtering agents by it always yields the empty set. In
+    practice the only keyless agents a user owns are the ones created by
+    default-space provisioning, so "all keyless agents I sponsor" is the
+    right semantics.
     """
     resp = await client.get("/api/actors/me/agents")
     if resp.status_code != 200:
@@ -206,7 +210,6 @@ async def _fetch_keyless_agents(
         for a in agents
         if a.get("actor_type") == "agent"
         and a.get("api_key_prefix") is None
-        and a.get("default_space_id") == space_id
     ]
 
 
