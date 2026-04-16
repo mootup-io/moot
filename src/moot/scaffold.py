@@ -96,7 +96,7 @@ async def _cmd_init_async(args: object) -> None:
         actor, space_id, space_name = await _fetch_actor_and_space(client)
         print(f"Fetched your default space: {space_id} ({space_name})")
 
-        keyless = await _fetch_keyless_agents(client)
+        keyless = await _fetch_keyless_agents(client, force=force)
         if not keyless and not force:
             print(
                 "Error: no keyless agents found in your default space.\n"
@@ -104,8 +104,12 @@ async def _cmd_init_async(args: object) -> None:
                 "`moot init --force` to rotate the existing keys."
             )
             raise SystemExit(1)
+        if not keyless and force:
+            print("Error: no agents found in your default space to adopt.")
+            raise SystemExit(1)
 
-        print(f"Found {len(keyless)} keyless agents in default space:")
+        adopt_label = "agents" if force else "keyless agents"
+        print(f"Found {len(keyless)} {adopt_label} in default space:")
         for agent in keyless:
             print(f"  - {agent['display_name']:16s} ({agent['actor_id']})")
 
@@ -183,22 +187,28 @@ async def _fetch_actor_and_space(
 
 async def _fetch_keyless_agents(
     client: httpx.AsyncClient,
+    *,
+    force: bool = False,
 ) -> list[dict[str, Any]]:
-    """List the user's sponsored agents and filter to the keyless ones.
+    """List the user's sponsored agents to adopt.
 
-    Originally called /api/spaces/{id}/participants, which returns Participant
-    objects (`name`, `participant_id`, no `api_key_prefix`). The downstream
-    code (display loop, _rotate_keys) reads `display_name`, `actor_id`, and
-    relied on `api_key_prefix` for the keyless filter — those are Actor fields,
-    not Participant fields. Switching to /api/actors/me/agents returns Actor
-    dicts whose shape matches what the rest of moot init expects.
+    Without `force`: only keyless agents (api_key_prefix is None) — the
+    first-time-setup case where default-space provisioning created agents
+    that haven't been claimed yet.
 
-    No space scoping: `default_space_id` lives on the human user (set by
-    backend/core/onboarding/service.py during onboarding) and is `None` for
-    agents, so filtering agents by it always yields the empty set. In
-    practice the only keyless agents a user owns are the ones created by
-    default-space provisioning, so "all keyless agents I sponsor" is the
-    right semantics.
+    With `force`: ALL sponsored agents, keyless or keyed. This matches the
+    cli's own user-facing message ("If you've run `moot init` before on
+    this space, use `moot init --force` to rotate the existing keys") —
+    a forced re-init re-rotates every key, not just the never-issued ones.
+
+    Background: originally called /api/spaces/{id}/participants, which
+    returns Participant objects (`name`, `participant_id`, no
+    `api_key_prefix`); switched to /api/actors/me/agents (which returns
+    Actor dicts) so display_name/actor_id/api_key_prefix accesses match
+    the response shape. No space scoping: default_space_id lives on the
+    human user, not on agents, so it can't be used to scope an agent
+    list. In practice all sponsored agents on a fresh user are
+    default-space-provisioned anyway.
     """
     resp = await client.get("/api/actors/me/agents")
     if resp.status_code != 200:
@@ -209,7 +219,7 @@ async def _fetch_keyless_agents(
         a
         for a in agents
         if a.get("actor_type") == "agent"
-        and a.get("api_key_prefix") is None
+        and (force or a.get("api_key_prefix") is None)
     ]
 
 
