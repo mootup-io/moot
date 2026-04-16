@@ -153,13 +153,26 @@ def resolve_template(name_or_path: str) -> Path:
 # -- Generators --------------------------------------------------------------
 
 
-def generate_moot_toml(profile: TeamProfile, api_url: str) -> str:
-    """Generate moot.toml content from a TeamProfile."""
+def generate_moot_toml(
+    profile: TeamProfile, api_url: str, space_id: str | None = None
+) -> str:
+    """Generate moot.toml content from a TeamProfile.
+
+    If `space_id` is provided (e.g., from `moot init` which already knows
+    the user's default space), emit it as a real value. Otherwise, emit a
+    commented placeholder so the user can set it later (via `moot config
+    set space_id <id>` or by hand).
+    """
+    space_id_line = (
+        f'space_id = "{space_id}"'
+        if space_id
+        else '# space_id = ""  # Set after creating a space'
+    )
     lines = [
         "[convo]",
         f'api_url = "{api_url}"',
         f'template = "{profile.name}"',
-        '# space_id = ""  # Set after creating a space',
+        space_id_line,
         "",
     ]
 

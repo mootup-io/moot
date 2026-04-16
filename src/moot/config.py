@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,63 @@ def load_agent_keys() -> dict[str, str]:
     return {}
 
 
+# ---- Top-level [convo] keys writable by `moot config set` -----------------
+#
+# Restricted to scalar string keys under [convo] (api_url, space_id,
+# template). Agent stanzas and harness settings are not exposed yet —
+# editing those requires preserving multi-line stanzas, which a regex
+# approach can't safely do. If a user needs to change those, they edit
+# moot.toml directly. Adding more keys later means extending this set
+# and the regex below.
+_SETTABLE_CONVO_KEYS = {"api_url", "space_id", "template"}
+
+
+def _set_convo_key(key: str, value: str) -> None:
+    """Set a top-level [convo] key in moot.toml.
+
+    Walks the file as text rather than round-tripping through a TOML
+    serializer, so agent stanzas, comments, and ordering are preserved
+    exactly. Replaces the key in place if present (commented or not),
+    otherwise appends it inside the [convo] section.
+    """
+    if key not in _SETTABLE_CONVO_KEYS:
+        print(
+            f"Error: cannot set '{key}'. "
+            f"Settable keys: {', '.join(sorted(_SETTABLE_CONVO_KEYS))}"
+        )
+        raise SystemExit(1)
+
+    toml_path = Path(MOOT_TOML)
+    if not toml_path.exists():
+        print(f"Error: {MOOT_TOML} not found in current directory.")
+        raise SystemExit(1)
+
+    text = toml_path.read_text()
+
+    # Match an existing line (commented or not) for this key. Catches:
+    #   key = "..."
+    #   # key = ""  # any trailing comment
+    pattern = re.compile(
+        rf'^[ \t]*#?\s*{re.escape(key)}\s*=.*$', re.MULTILINE
+    )
+    replacement = f'{key} = "{value}"'
+    if pattern.search(text):
+        new_text = pattern.sub(replacement, text, count=1)
+    else:
+        # Inject under [convo] header. Match the first non-empty/non-comment
+        # line after [convo] and insert before it. Fail loudly if [convo]
+        # header is missing — moot.toml without it is malformed.
+        convo_header = re.search(r'^\[convo\]\s*$', text, re.MULTILINE)
+        if not convo_header:
+            print(f"Error: {MOOT_TOML} has no [convo] section to update.")
+            raise SystemExit(1)
+        insert_pos = convo_header.end() + 1  # past the trailing newline
+        new_text = text[:insert_pos] + replacement + "\n" + text[insert_pos:]
+
+    toml_path.write_text(new_text)
+    print(f"Set [convo].{key} = \"{value}\" in {MOOT_TOML}")
+
+
 def cmd_config(args: object) -> None:
     """Handle `moot config show/set/focus`."""
     sub = getattr(args, "config_command", None)
@@ -100,7 +158,7 @@ def cmd_config(args: object) -> None:
     elif sub == "set":
         key = getattr(args, "key")
         value = getattr(args, "value")
-        print(f"TODO: set {key} = {value}")
+        _set_convo_key(key, value)
     elif sub == "focus":
         space_id = getattr(args, "space_id")
         print(f"TODO: set focus space to {space_id}")
