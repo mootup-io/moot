@@ -184,19 +184,29 @@ async def _fetch_actor_and_space(
 async def _fetch_keyless_agents(
     client: httpx.AsyncClient, space_id: str
 ) -> list[dict[str, Any]]:
-    """List participants and filter to keyless agents."""
-    resp = await client.get(f"/api/spaces/{space_id}/participants")
+    """List the user's sponsored agents and filter to the keyless ones in the
+    user's default space.
+
+    Originally called /api/spaces/{id}/participants, which returns Participant
+    objects (`name`, `participant_id`, no `api_key_prefix`). The downstream
+    code (display loop, _rotate_keys) reads `display_name`, `actor_id`, and
+    relied on `api_key_prefix` for the keyless filter — those are Actor fields,
+    not Participant fields. Result: the keyless filter never narrowed and the
+    display loop crashed with KeyError('display_name'). Switching to
+    /api/actors/me/agents returns Actor dicts whose shape matches what the
+    rest of moot init expects.
+    """
+    resp = await client.get("/api/actors/me/agents")
     if resp.status_code != 200:
-        print(f"Error: could not list participants ({resp.status_code})")
+        print(f"Error: could not list agents ({resp.status_code})")
         raise SystemExit(1)
-    participants = resp.json()
-    if isinstance(participants, dict):
-        participants = participants.get("participants", [])
+    agents = resp.json()
     return [
-        p
-        for p in participants
-        if p.get("participant_type") == "agent"
-        and p.get("api_key_prefix") is None
+        a
+        for a in agents
+        if a.get("actor_type") == "agent"
+        and a.get("api_key_prefix") is None
+        and a.get("default_space_id") == space_id
     ]
 
 
