@@ -106,15 +106,47 @@ def test_skills_bundle_complete() -> None:
 
 
 def test_devcontainer_no_convo_customizations() -> None:
-    """devcontainer.json has no runArgs, mounts, or convo-specific extensions."""
+    """devcontainer.json has no mounts or convo-specific extensions/runArgs.
+
+    A `--name moot-${localWorkspaceFolderBasename}` runArg is allowed and
+    expected — it gives the container a durable, project-derived name so
+    users can refer to it by name across restarts instead of chasing
+    docker's rotating adjective_noun defaults.
+    """
     content = (DEVCONTAINER_TEMPLATE_DIR / "devcontainer.json").read_text()
     data = json.loads(content)
-    assert "runArgs" not in data, "Template should not have runArgs"
     assert "mounts" not in data, "Template should not have mounts"
+    forbidden_runarg_patterns = [
+        "--add-host", "host-gateway", "gemoot.com",
+        "keriden", "ignos", "/workspaces/convo",
+    ]
+    for arg in data.get("runArgs", []):
+        for pattern in forbidden_runarg_patterns:
+            assert pattern not in arg, (
+                f"Template runArgs contains forbidden convo-specific "
+                f"pattern: {arg}"
+            )
     extensions = data.get("customizations", {}).get("vscode", {}).get("extensions", [])
     convo_extensions = ["svelte.svelte-vscode", "dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
     for ext in convo_extensions:
         assert ext not in extensions, f"Template should not include convo-specific extension: {ext}"
+
+
+def test_devcontainer_has_durable_container_name() -> None:
+    """The bundled devcontainer.json must pin `--name moot-<project>` via
+    runArgs so users don't have to look up a fresh adjective_noun each
+    time they run docker ps. The `${localWorkspaceFolderBasename}` var is
+    resolved by the devcontainer CLI from the host workspace path."""
+    content = (DEVCONTAINER_TEMPLATE_DIR / "devcontainer.json").read_text()
+    data = json.loads(content)
+    run_args = data.get("runArgs", [])
+    assert "--name" in run_args, "devcontainer.json must set a durable --name"
+    name_idx = run_args.index("--name")
+    assert name_idx + 1 < len(run_args), "runArgs --name missing its value"
+    assert "${localWorkspaceFolderBasename}" in run_args[name_idx + 1], (
+        "container name should be derived from the project folder so each "
+        "project gets a unique durable name"
+    )
 
 
 def test_post_create_no_convo_paths() -> None:
@@ -148,33 +180,56 @@ def test_runner_scripts_read_moot_toml() -> None:
         )
 
 
-def test_channel_runner_logs_stderr() -> None:
-    """Channel runner script redirects stderr to a log file."""
-    content = (DEVCONTAINER_TEMPLATE_DIR / "run-moot-channel.sh").read_text()
-    assert "2>" in content, "Channel runner should redirect stderr"
-    assert "LOG_FILE" in content, "Channel runner should define LOG_FILE"
+def test_runner_scripts_capture_verbose_logs_to_project_dir() -> None:
+    """Both MCP runner wrappers redirect stderr to a per-role log file
+    under .moot/logs/ and default the adapter to DEBUG level so users'
+    difficulties can be diagnosed without them having to instrument the
+    container themselves. Alpha invariant until MOOT_LOG_LEVEL is flipped
+    to INFO project-wide."""
+    for script_name in ("run-moot-mcp.sh", "run-moot-channel.sh"):
+        content = (DEVCONTAINER_TEMPLATE_DIR / script_name).read_text()
+        assert "2>>" in content, f"{script_name} must redirect stderr (append)"
+        assert ".moot/logs" in content, (
+            f"{script_name} must log to the bind-mounted project dir, "
+            f"not /tmp, so users can share logs from the host"
+        )
+        assert "MOOT_LOG_LEVEL" in content, (
+            f"{script_name} must export MOOT_LOG_LEVEL so the adapter "
+            f"picks up DEBUG by default"
+        )
+        assert "DEBUG" in content, (
+            f"{script_name} must default MOOT_LOG_LEVEL to DEBUG during alpha"
+        )
 
 
-def test_post_create_does_not_run_claude_install() -> None:
-    """post-create.sh does NOT invoke `claude install` — it deletes the npm binary.
+def test_post_create_runs_claude_install_after_mcp_add() -> None:
+    """post-create.sh migrates to the native claude build via `claude install`,
+    and does so AFTER the `claude mcp add` calls.
 
-    Regression guard for Run V: `claude install` replaces
-    /usr/local/share/npm-global/bin/claude with ~/.local/bin/claude
-    and ~/.local/bin is not on the script's PATH, so the subsequent
-    `claude mcp add` lines fail with `claude: command not found`.
+    `claude install` removes the npm-symlinked binary (the one on the
+    script's PATH from `npm install -g`), so any `claude mcp add` calls
+    that follow would fail with `claude: command not found`. Agent tmux
+    sessions launch with `bash -lc`, which adds ~/.local/bin to PATH via
+    ~/.profile, so the native build is findable at runtime.
     """
     content = (DEVCONTAINER_TEMPLATE_DIR / "post-create.sh").read_text()
-    # Match only the command invocation, not text inside comments.
-    # Every non-comment line that starts with `claude install` (optionally
-    # preceded by whitespace) counts.
-    for line in content.splitlines():
+    lines = content.splitlines()
+    install_idx: int | None = None
+    last_mcp_add_idx: int | None = None
+    for i, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        assert not stripped.startswith("claude install"), (
-            "post-create.sh must not run `claude install` (deletes npm binary; "
-            "breaks PATH for subsequent `claude mcp add` calls)"
-        )
+        if stripped.startswith("claude install"):
+            install_idx = i
+        if stripped.startswith("claude mcp add"):
+            last_mcp_add_idx = i
+    assert install_idx is not None, "post-create.sh must run `claude install`"
+    assert last_mcp_add_idx is not None, "post-create.sh must run `claude mcp add`"
+    assert install_idx > last_mcp_add_idx, (
+        "`claude install` must run AFTER all `claude mcp add` calls "
+        "(install deletes the npm symlink used by mcp add)"
+    )
 
 
 def test_post_create_uses_strict_mode() -> None:
@@ -217,7 +272,7 @@ def test_publish_doc_exists() -> None:
 
     Product scope item 4 (Run V): the post-create.sh `pip install mootup`
     path hard-depends on PyPI being current. The publish procedure must
-    be documented, not live only on Pat's laptop.
+    be documented, not live only on the operator's laptop.
     """
     publish_doc = Path(__file__).parent.parent / "docs" / "publish.md"
     assert publish_doc.exists(), f"Expected {publish_doc} to exist"

@@ -149,6 +149,30 @@ def exec_interactive(container_id: str, args: list[str]) -> None:
     tmux attach-session (or any interactive command) works naturally.
     Does not raise on nonzero rc — interactive commands routinely exit
     nonzero on Ctrl-C or Ctrl-D and that is not an error to surface.
+
+    Sets TERM=xterm-256color + a UTF-8 LANG inside the container so the
+    tmux client has a terminfo entry it can find (the container's
+    terminfo DB is limited — `xterm-24bits`, `xterm-kitty`, `alacritty`
+    and other host-specific entries typically aren't present and tmux
+    refuses to start with "missing or unsuitable terminal"). Propagates
+    COLORTERM through from the host so modern TUIs still pick up
+    truecolor. These together are what keep claude's TUI logo, borders,
+    and colors rendering correctly across host terminals.
     """
-    cmd = ["docker", "exec", "-it", "--user", "node", container_id] + args
+    import os
+
+    term_env = [
+        "-e", "TERM=xterm-256color",
+        "-e", "LANG=C.UTF-8",
+    ]
+    colorterm = os.environ.get("COLORTERM")
+    if colorterm:
+        term_env += ["-e", f"COLORTERM={colorterm}"]
+
+    cmd = (
+        ["docker", "exec", "-it", "--user", "node"]
+        + term_env
+        + [container_id]
+        + args
+    )
     subprocess.run(cmd, check=False)

@@ -104,6 +104,8 @@ def main() -> None:
     compact_p.add_argument("role", nargs="?", help="Compact specific role")
     attach_p = sub.add_parser("attach", help="Attach to agent tmux session")
     attach_p.add_argument("role")
+    detach_p = sub.add_parser("detach", help="Detach from agent tmux session")
+    detach_p.add_argument("role")
 
     args = parser.parse_args()
     if not args.command:
@@ -142,3 +144,6 @@ def main() -> None:
     elif args.command == "attach":
         from moot.lifecycle import cmd_attach
         cmd_attach(args)
+    elif args.command == "detach":
+        from moot.lifecycle import cmd_detach
+        cmd_detach(args)

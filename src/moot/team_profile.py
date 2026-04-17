@@ -191,6 +191,12 @@ def generate_moot_toml(
     lines.append("[harness]")
     lines.append(f'type = "{harness}"')
     lines.append('permissions = "dangerously-skip"')
+    # Role the operator talks to directly. moot up launches this one first
+    # on a cold start so claude /login happens in its tmux session. Default to
+    # product if present, otherwise the first role.
+    role_names = [r.name for r in profile.roles]
+    hi = "product" if "product" in role_names else (role_names[0] if role_names else "")
+    lines.append(f'human_interface = "{hi}"')
     lines.append("")
 
     return "\n".join(lines)

@@ -13,20 +13,28 @@ while [ "$PROJECT_ROOT" != "/" ]; do
     PROJECT_ROOT="$(dirname "$PROJECT_ROOT")"
 done
 
-# Read API key from .moot/actors.json (nested schema)
+# Read per-role actor identity from .moot/actors.json. We MUST export
+# CONVO_AGENT_ID and CONVO_AGENT_NAME — the mcp_runner defaults them to
+# "unknown-agent", and the backend rejects any post whose agent_id in the
+# body doesn't match the authenticated actor (HTTP 400, which the adapter
+# surfaces as an empty event_id).
 if [ -f "$PROJECT_ROOT/$ACTORS_FILE" ]; then
-    KEY=$(python3 -c "
-import json
+    eval $(python3 -c "
+import json, shlex
 with open('$PROJECT_ROOT/$ACTORS_FILE') as f:
     data = json.load(f)
 entry = data.get('actors', {}).get('$ROLE', {})
-print(entry.get('api_key', ''))
+print('KEY=' + shlex.quote(entry.get('api_key', '')))
+print('AID=' + shlex.quote(entry.get('actor_id', '')))
+print('ANAME=' + shlex.quote(entry.get('display_name', '$ROLE')))
 " 2>/dev/null)
     if [ -n "$KEY" ]; then
         export CONVO_API_KEY="$KEY"
     else
         echo "WARNING: No API key for role '$ROLE' in $ACTORS_FILE" >&2
     fi
+    [ -n "$AID" ] && export CONVO_AGENT_ID="$AID"
+    [ -n "$ANAME" ] && export CONVO_AGENT_NAME="$ANAME"
 fi
 
 # Read API URL from moot.toml
@@ -55,4 +63,12 @@ print(data.get('convo', {}).get('space_id', ''))
     fi
 fi
 
-exec python -m moot.adapters.mcp_runner "$@"
+# Alpha-grade diagnostics: DEBUG-level logs to a per-role file under
+# .moot/logs/ in the project root. Bind-mounted to the host so users
+# and support can grep and share the logs without docker exec.
+# Override with MOOT_LOG_LEVEL=INFO (or higher) once alpha stabilizes.
+LOG_DIR="$PROJECT_ROOT/.moot/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/mcp-${ROLE}.log"
+export MOOT_LOG_LEVEL="${MOOT_LOG_LEVEL:-DEBUG}"
+exec python -u -m moot.adapters.mcp_runner "$@" 2>> "$LOG_FILE"

@@ -10,6 +10,9 @@
     }
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "runArgs": [
+    "--name", "moot-${localWorkspaceFolderBasename}"
+  ],
   "customizations": {
     "vscode": {
       "extensions": [

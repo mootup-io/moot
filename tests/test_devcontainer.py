@@ -264,7 +264,13 @@ def test_exec_detached_uses_d_flag(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # --- exec_interactive ---
 
-def test_exec_interactive_uses_it_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exec_interactive_pins_term_and_lang_to_container_safe_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Always pin TERM=xterm-256color + LANG=C.UTF-8 because host TERM
+    values (e.g. xterm-24bits, xterm-kitty, alacritty) often have no
+    terminfo entry inside the container — tmux then refuses to start
+    with 'missing or unsuitable terminal'."""
     import moot.devcontainer as dc
     captured: dict[str, list[str]] = {}
 
@@ -273,9 +279,34 @@ def test_exec_interactive_uses_it_flag(monkeypatch: pytest.MonkeyPatch) -> None:
         return _fake_run()
 
     monkeypatch.setattr(dc.subprocess, "run", fake_run)
+    monkeypatch.setenv("TERM", "xterm-24bits")  # exotic host TERM
+    monkeypatch.delenv("COLORTERM", raising=False)
+
     exec_interactive("cid", ["tmux", "attach-session", "-t", "moot-spec"])
     cmd = captured["cmd"]
-    assert cmd == [
-        "docker", "exec", "-it", "--user", "node", "cid",
-        "tmux", "attach-session", "-t", "moot-spec",
-    ]
+    assert cmd[:5] == ["docker", "exec", "-it", "--user", "node"]
+    assert "TERM=xterm-256color" in cmd
+    assert "TERM=xterm-24bits" not in cmd
+    assert "LANG=C.UTF-8" in cmd
+    # No COLORTERM arg when the host didn't set one.
+    assert not any(e.startswith("COLORTERM=") for e in cmd)
+    assert cmd[-4:] == ["tmux", "attach-session", "-t", "moot-spec"]
+
+
+def test_exec_interactive_passes_colorterm_when_host_exports_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """COLORTERM is safe to pass through — it's just a capability flag,
+    not a terminfo lookup key."""
+    import moot.devcontainer as dc
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = cmd
+        return _fake_run()
+
+    monkeypatch.setattr(dc.subprocess, "run", fake_run)
+    monkeypatch.setenv("COLORTERM", "truecolor")
+
+    exec_interactive("cid", ["tmux", "attach-session", "-t", "moot-spec"])
+    assert "COLORTERM=truecolor" in captured["cmd"]

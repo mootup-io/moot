@@ -19,7 +19,12 @@ class AgentConfig:
         self.profile: str = data.get("profile", "devcontainer")
         self.startup_prompt: str = data.get(
             "startup_prompt",
-            f"Run your startup protocol from CLAUDE.md. You are the {role.title()} agent.",
+            (
+                f"You are the {role.title()} agent. Call orientation() to "
+                f"get your identity, focus space, and recent context in one "
+                f"call. Then subscribe to the channel and post a "
+                f"status_update confirming you are online."
+            ),
         )
 
 
@@ -36,6 +41,14 @@ class MootConfig:
         self.agents: dict[str, AgentConfig] = {}
         for role, agent_data in data.get("agents", {}).items():
             self.agents[role] = AgentConfig(role, agent_data)
+        # Role the operator talks to directly. `moot up` launches this one
+        # first on a cold start (no claude credentials yet) so first-time login
+        # happens through its tmux session — the rest of the team starts
+        # once credentials exist.
+        self.human_interface: str = harness.get(
+            "human_interface",
+            "product" if "product" in self.agents else (next(iter(self.agents), "")),
+        )
 
     @property
     def roles(self) -> list[str]:

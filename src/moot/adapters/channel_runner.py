@@ -33,8 +33,14 @@ from moot.adapters.channel_adapter import ChannelAdapter
 
 
 async def main() -> None:
+    # Default to DEBUG during alpha so ops can reconstruct what the adapter
+    # actually did when users report "nothing happened" bugs. MOOT_LOG_LEVEL
+    # lets us dial it back to INFO/WARNING once alpha stabilizes.
+    level_name = os.environ.get("MOOT_LOG_LEVEL", "DEBUG").upper()
+    level = getattr(logging, level_name, logging.DEBUG)
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+        level=level,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
     api_url = os.environ.get("CONVO_API_URL", "http://localhost:8000")

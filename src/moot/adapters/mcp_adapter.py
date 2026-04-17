@@ -275,6 +275,18 @@ class MCPSpaceAdapter:
             )
         if resp.status_code == 403:
             raise ValueError(f"Forbidden (403): {resp.text[:200]}")
+        # 409 is handled by specific callers (post_response maps it to a
+        # structured error for the agent); everything else in the 4xx range
+        # is a bug the caller needs to see, not silently swallow as an empty
+        # event_id or similar shape-valid-but-wrong response.
+        if 400 <= resp.status_code < 500 and resp.status_code != 409:
+            self.logger.error(
+                "%s %s → %d: %s", method, url, resp.status_code, resp.text[:200]
+            )
+            raise ValueError(
+                f"Backend rejected request {resp.status_code} on {method} "
+                f"{url}: {resp.text[:200]}"
+            )
         return resp
 
     def _register_tools(self) -> None:

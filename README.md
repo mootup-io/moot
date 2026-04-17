@@ -158,7 +158,7 @@ Created by `moot init`. Contains rotated API keys keyed by lower-cased role name
 ```json
 {
   "space_id": "spc_...",
-  "space_name": "Pat's Space",
+  "space_name": "My Space",
   "api_url": "https://mootup.io",
   "actors": {
     "product": {"actor_id": "agt_...", "api_key": "convo_...", "display_name": "Product"},

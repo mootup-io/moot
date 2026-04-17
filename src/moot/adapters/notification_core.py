@@ -142,11 +142,19 @@ class NotificationCore(ABC):
     async def _stream_loop(self, space_id: str) -> None:
         ws_url = self._ws_url(space_id)
         logger.info("WS connecting to %s", ws_url[:80])
+        # websockets requires a truthy ssl= value for wss:// URIs; passing
+        # ssl=None is treated as "no TLS" and raises ValueError. Default to
+        # True (uses the system CA bundle) and only build a custom context
+        # when SSL_CERT_FILE is set (dev stacks with a private CA).
         ssl_cert = os.environ.get("SSL_CERT_FILE")
-        ssl_context: Any = None
+        ssl_context: Any
         if ssl_cert:
             import ssl
             ssl_context = ssl.create_default_context(cafile=ssl_cert)
+        elif ws_url.startswith("wss://"):
+            ssl_context = True
+        else:
+            ssl_context = None  # ws:// — plain TCP, no TLS
         async with websockets.connect(
             ws_url, ssl=ssl_context, open_timeout=10,
             proxy=None,  # disable proxy auto-detection (v16 default)

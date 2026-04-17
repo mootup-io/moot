@@ -63,9 +63,14 @@ def cmd_compact(args: object) -> None:
 def cmd_attach(args: object) -> None:
     """Attach to an agent's tmux session via `docker exec -it`.
 
+    If the session doesn't exist yet (e.g., the user /exit'd claude and
+    tore down the tmux session), relaunch the role inline instead of
+    erroring — saves a `moot up` round-trip. Requires the container to
+    be up and claude credentials to already be warm; if not, point at
+    `moot up` which handles cold-start cascade.
+
     Blocks until the user detaches. No post-exit output — tmux handles
-    its own display. If the session or container is missing, exits 1
-    with an error.
+    its own display.
     """
     role = getattr(args, "role")
     container_id = container_id_or_none(Path.cwd())
@@ -75,10 +80,59 @@ def cmd_attach(args: object) -> None:
 
     session = _session_name(role)
     if not _session_exists(container_id, role):
-        print(f"Error: {session} not running")
-        raise SystemExit(1)
+        # Auto-relaunch the role. Lazy import to avoid circularity
+        # through lifecycle ← launch ← config dependency chain.
+        from moot.config import find_config
+        from moot.launch import _credentials_present, _launch_role
+
+        config = find_config()
+        if config is None:
+            print("Error: no moot.toml found. Run 'moot init' first.")
+            raise SystemExit(1)
+        if role not in config.agents:
+            print(
+                f"Error: unknown role '{role}'. "
+                f"Available: {', '.join(config.roles)}"
+            )
+            raise SystemExit(1)
+        if not _credentials_present(container_id):
+            print(
+                "Error: claude credentials not yet present. Run `moot up` "
+                "to complete first-time setup."
+            )
+            raise SystemExit(1)
+        print(f"{session} not running — launching...")
+        _launch_role(container_id, config, role, prompt_override=None)
 
     exec_interactive(
         container_id,
         ["tmux", "attach-session", "-t", session],
     )
+
+
+def cmd_detach(args: object) -> None:
+    """Detach any attached client from an agent's tmux session.
+
+    Leaves claude running inside the session; only disconnects the
+    terminal. Complements `moot attach` when the user can't press the
+    tmux prefix from inside claude (claude intercepts Ctrl-B). The
+    bundled .tmux.conf also rebinds the prefix to Ctrl-Space, so
+    `<prefix> d` works from inside a session — this command is the
+    external escape hatch.
+    """
+    role = getattr(args, "role")
+    container_id = container_id_or_none(Path.cwd())
+    if container_id is None:
+        print("No devcontainer running for this workspace.")
+        return
+
+    session = _session_name(role)
+    if not _session_exists(container_id, role):
+        print(f"{session} not running")
+        return
+
+    exec_capture(
+        container_id,
+        ["tmux", "detach-client", "-s", session],
+    )
+    print(f"Detached all clients from {session}")
