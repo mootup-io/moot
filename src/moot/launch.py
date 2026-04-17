@@ -42,12 +42,15 @@ def _ensure_worktree(container_id: str, project: str, role: str) -> str:
     )
     if rc == 0:
         return wt_path
+    branch = f"{role}/work"
     rc, _stdout, stderr = exec_capture(
         container_id,
         [
             "bash", "-c",
             f"cd /workspaces/{shlex.quote(project)} && "
-            f"git worktree add {shlex.quote(wt_path)} main",
+            f"git worktree prune && "
+            f"(git worktree add {shlex.quote(wt_path)} -b {shlex.quote(branch)} HEAD "
+            f" || git worktree add {shlex.quote(wt_path)} {shlex.quote(branch)})",
         ],
     )
     if rc != 0:
@@ -71,7 +74,7 @@ def _launch_role(
     """
     session = _session_name(role)
     if _session_exists(container_id, role):
-        print(f"Session {session} already running in {container_id[:12]}")
+        print(f"{role} already running in {session}")
         return
 
     project = Path.cwd().name
@@ -87,10 +90,13 @@ def _launch_role(
     # inspect.getsource-based test (test_launch_includes_channel_flag).
     match config.harness_type:
         case "claude-code":
+            # Use `--` to seed the first user turn while keeping claude in
+            # interactive TUI mode. `-p` runs in print mode and exits as
+            # soon as the response is emitted, which kills the tmux session.
             claude_cmd = (
                 "claude --dangerously-skip-permissions "
                 "--dangerously-load-development-channels server:convo-channel "
-                f"-p {shlex.quote(prompt)}"
+                f"-- {shlex.quote(prompt)}"
             )
         case _:
             print(f"Error: harness '{config.harness_type}' not yet supported")
@@ -105,19 +111,23 @@ def _launch_role(
     env: dict[str, str] = {
         "CONVO_ROLE": role,
         "CONVO_API_URL": config.api_url,
+        # tmux + claude TUI need a real TERM; default to xterm-256color
+        # because docker exec under bash -lc starts with TERM=dumb.
+        "TERM": "xterm-256color",
+        "COLORTERM": "truecolor",
     }
     if api_key:
         env["CONVO_API_KEY"] = api_key
 
     rc, _stdout, stderr = exec_capture(
         container_id,
-        ["bash", "-c", tmux_cmd],
+        ["bash", "-lc", tmux_cmd],
         env=env,
     )
     if rc != 0:
         print(f"Error launching {role}: {stderr.strip()}")
         raise SystemExit(1)
-    print(f"Launched {role} in {session} (container {container_id[:12]}, {wt_path})")
+    print(f"Launched {role} in {session}")
 
 
 def cmd_exec(args: object) -> None:
@@ -144,7 +154,13 @@ def cmd_exec(args: object) -> None:
 
 
 def cmd_up(args: object) -> None:
-    """Start all (or selected) agents. Boots the container once."""
+    """Start all (or selected) agents. Boots the container once.
+
+    On success prints a closing summary: `Started <N> agents in container
+    <short-id>. Connect with 'moot attach <role>' or check 'moot status'.`
+    N counts roles that were launched OR already running. If `_launch_role`
+    raises (e.g. tmux command failed), the summary is not printed.
+    """
     config = find_config()
     if not config:
         print("Error: no moot.toml found. Run 'moot init' first.")
@@ -154,11 +170,17 @@ def cmd_up(args: object) -> None:
     roles: list[str] = only.split(",") if only else config.roles
 
     container_id = up(Path.cwd())
+    alive = 0
     for role in roles:
         if role not in config.agents:
             print(f"Warning: unknown role '{role}', skipping")
             continue
         _launch_role(container_id, config, role, prompt_override=None)
+        alive += 1
+    print(
+        f"Started {alive} agents in container {container_id[:12]}. "
+        f"Connect with 'moot attach <role>' or check 'moot status'."
+    )
 
 
 def cmd_down(args: object) -> None:

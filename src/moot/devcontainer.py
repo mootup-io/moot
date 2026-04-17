@@ -13,7 +13,6 @@ appear on the bash command line (ps, scrollback, tmux env dump).
 """
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,42 +35,38 @@ def ensure_cli() -> None:
 def up(workspace: Path) -> str:
     """Boot (or rediscover) the devcontainer for `workspace`; return its id.
 
-    Runs `devcontainer up --workspace-folder <workspace> --log-format json`.
-    The CLI writes newline-delimited JSON to stdout; the final line is the
-    result object (`{"outcome": "success", "containerId": "...", ...}` or
-    `{"outcome": "error", "message": "..."}`). Idempotent — if the container
-    already exists and is running, the CLI returns its id without rebooting.
+    Runs `devcontainer up --workspace-folder <workspace>` in default text
+    log format and streams stdout/stderr to the user's terminal. After the
+    subprocess exits, looks up the running container id via
+    `container_id_or_none()` (which queries the `devcontainer.local_folder`
+    label). On non-zero exit, raises `DevcontainerError` with the exit
+    code — the actual error output is already on the user's terminal, so
+    we don't re-embed it in the exception message.
+
+    Prints a pre-build hint only when no container is currently running
+    for this workspace. The CLI's idempotent re-up path is ~0.35s, so
+    we don't short-circuit; we just suppress the "can take 1-3 minutes"
+    line that would be misleading on a re-up.
     """
     ensure_cli()
+    already_running = container_id_or_none(workspace) is not None
+    if not already_running:
+        print(
+            f"Building devcontainer in {workspace} "
+            "(first launch can take 1-3 minutes)..."
+        )
     proc = subprocess.run(
-        [
-            "devcontainer", "up",
-            "--workspace-folder", str(workspace),
-            "--log-format", "json",
-        ],
-        capture_output=True,
-        text=True,
+        ["devcontainer", "up", "--workspace-folder", str(workspace)],
     )
-    lines = proc.stdout.strip().splitlines()
-    if not lines:
+    if proc.returncode != 0:
         raise DevcontainerError(
-            f"devcontainer up produced no output (rc={proc.returncode}): "
-            f"{proc.stderr.strip()[:500]}"
+            f"devcontainer up failed (exit code {proc.returncode})"
         )
-    try:
-        result = json.loads(lines[-1])
-    except json.JSONDecodeError as e:
-        raise DevcontainerError(
-            f"could not parse devcontainer up final line: {e}\n"
-            f"line: {lines[-1][:500]}"
-        )
-    if result.get("outcome") != "success":
-        msg = result.get("message") or result.get("description") or "unknown error"
-        raise DevcontainerError(f"devcontainer up failed: {msg}")
-    container_id = result.get("containerId")
+    container_id = container_id_or_none(workspace)
     if not container_id:
         raise DevcontainerError(
-            "devcontainer up reported success but returned no containerId"
+            f"devcontainer up exited 0 but no running container was found "
+            f"for {workspace}"
         )
     return container_id
 

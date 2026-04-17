@@ -68,11 +68,15 @@ def test_cmd_exec_launch_full_flow(
     ns = argparse.Namespace(role="spec", prompt=None)
     launch.cmd_exec(ns)
 
-    # Find the tmux new-session call (the one with bash -c ...)
+    # Find the tmux new-session call (the one with bash -lc ...)
     tmux_indices = [
-        i for i, a in enumerate(captured_args) if a[:2] == ["bash", "-c"]
+        i for i, a in enumerate(captured_args) if a[:2] == ["bash", "-lc"]
     ]
-    assert tmux_indices, "expected a bash -c ... call for tmux new-session"
+    assert tmux_indices, "expected a bash -lc ... call for tmux new-session"
+    tmux_call = captured_args[tmux_indices[-1]]
+    assert tmux_call[:2] == ["bash", "-lc"], (
+        "tmux launch must use `bash -lc` to source ~/.profile and pick up ~/.local/bin"
+    )
     last = tmux_indices[-1]
     script = captured_args[last][2]
     # shlex.quote on a hyphenated-identifier returns the identifier unquoted.
@@ -140,16 +144,19 @@ def test_cmd_exec_no_moot_toml(
 
 
 def test_cmd_up_boots_once(
-    monkeypatch: pytest.MonkeyPatch, patch_config: None
+    monkeypatch: pytest.MonkeyPatch,
+    patch_config: None,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """cmd_up calls up() exactly once even when launching multiple roles."""
+    """cmd_up calls up() exactly once even when launching multiple roles
+    and prints the closing summary naming the container."""
     import moot.launch as launch
 
     up_calls: list[Path] = []
 
     def fake_up(wd: Path) -> str:
         up_calls.append(wd)
-        return "cidOnce"
+        return "cidOnceAAAAAA"
 
     monkeypatch.setattr(launch, "up", fake_up)
 
@@ -165,6 +172,11 @@ def test_cmd_up_boots_once(
     ns = argparse.Namespace(only=None)
     launch.cmd_up(ns)
     assert len(up_calls) == 1
+    out = capsys.readouterr().out
+    # 2 roles in FakeConfig (spec, impl), both already running
+    assert "Started 2 agents in container cidOnceAAAAA" in out
+    assert "moot attach" in out
+    assert "moot status" in out
 
 
 def test_cmd_down_stops_tmux_sessions(

@@ -1,7 +1,6 @@
 """Unit tests for moot.devcontainer — mock subprocess at the boundary."""
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -47,58 +46,132 @@ def _fake_run(
     )
 
 
-def test_up_parses_container_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_streams_then_looks_up_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Success path: no --log-format flag, output not captured, container
+    id comes from the post-exit `container_id_or_none()` call."""
     import moot.devcontainer as dc
     monkeypatch.setattr(dc.shutil, "which", lambda _: "/usr/bin/devcontainer")
-    payload = json.dumps(
-        {"outcome": "success", "containerId": "abc123def", "remoteUser": "node"}
-    )
-    # Simulate typical text-log noise preceding the JSON result.
-    stdout = "building image...\n" + payload + "\n"
+    lookups: list[Path] = []
+
+    def fake_lookup(ws: Path) -> str | None:
+        lookups.append(ws)
+        return None if len(lookups) == 1 else "cid_from_lookup"
+
+    monkeypatch.setattr(dc, "container_id_or_none", fake_lookup)
+
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _fake_run(returncode=0)
+
+    monkeypatch.setattr(dc.subprocess, "run", fake_run)
+
+    result = up(Path("/tmp/workspace"))
+
+    assert result == "cid_from_lookup"
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd == [
+        "devcontainer", "up",
+        "--workspace-folder", "/tmp/workspace",
+    ]
+    # No --log-format json, no capture_output=True
+    assert "--log-format" not in cmd
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert not kwargs.get("capture_output")
+    assert len(lookups) == 2
+
+
+def test_up_nonzero_exit_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-zero exit from `devcontainer up` raises DevcontainerError with
+    the exit code embedded; stderr/stdout are NOT captured in the message
+    (they already streamed to the user's terminal)."""
+    import moot.devcontainer as dc
+    monkeypatch.setattr(dc.shutil, "which", lambda _: "/usr/bin/devcontainer")
     monkeypatch.setattr(
-        dc.subprocess, "run", lambda *a, **kw: _fake_run(stdout=stdout)
+        dc, "container_id_or_none", lambda _ws: None
     )
-    assert up(Path("/tmp/workspace")) == "abc123def"
-
-
-def test_up_error_outcome_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    import moot.devcontainer as dc
-    monkeypatch.setattr(dc.shutil, "which", lambda _: "/usr/bin/devcontainer")
-    payload = json.dumps(
-        {"outcome": "error", "message": "docker daemon not reachable"}
-    )
-    monkeypatch.setattr(
-        dc.subprocess, "run", lambda *a, **kw: _fake_run(stdout=payload + "\n")
-    )
-    with pytest.raises(DevcontainerError) as exc:
-        up(Path("/tmp/workspace"))
-    assert "docker daemon not reachable" in str(exc.value)
-
-
-def test_up_empty_stdout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    import moot.devcontainer as dc
-    monkeypatch.setattr(dc.shutil, "which", lambda _: "/usr/bin/devcontainer")
     monkeypatch.setattr(
         dc.subprocess, "run",
-        lambda *a, **kw: _fake_run(
-            stdout="", stderr="permission denied", returncode=1
-        ),
+        lambda *a, **kw: _fake_run(returncode=137),
     )
     with pytest.raises(DevcontainerError) as exc:
         up(Path("/tmp/workspace"))
-    assert "permission denied" in str(exc.value)
+    assert "exit code 137" in str(exc.value)
 
 
-def test_up_malformed_json_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_prints_build_hint_when_cold(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Cold boot: no running container → preamble prints before the CLI call."""
+    import moot.devcontainer as dc
+    monkeypatch.setattr(dc.shutil, "which", lambda _: "/usr/bin/devcontainer")
+    lookups: list[Path] = []
+
+    def fake_lookup(ws: Path) -> str | None:
+        lookups.append(ws)
+        return None if len(lookups) == 1 else "cidCold"
+
+    monkeypatch.setattr(dc, "container_id_or_none", fake_lookup)
+    monkeypatch.setattr(
+        dc.subprocess, "run", lambda *a, **kw: _fake_run(returncode=0)
+    )
+
+    up(Path("/tmp/workspace"))
+    out = capsys.readouterr().out
+    assert "Building devcontainer in /tmp/workspace" in out
+    assert "1-3 minutes" in out
+
+
+def test_up_skips_build_hint_when_warm(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Re-up: container already running → preamble suppressed. CLI still runs
+    (no code-level short-circuit per D3)."""
     import moot.devcontainer as dc
     monkeypatch.setattr(dc.shutil, "which", lambda _: "/usr/bin/devcontainer")
     monkeypatch.setattr(
-        dc.subprocess, "run",
-        lambda *a, **kw: _fake_run(stdout="not json at all\n"),
+        dc, "container_id_or_none", lambda _ws: "cidWarm"
+    )
+    ran: list[list[str]] = []
+
+    def fake_run(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        ran.append(cmd)
+        return _fake_run(returncode=0)
+
+    monkeypatch.setattr(dc.subprocess, "run", fake_run)
+
+    result = up(Path("/tmp/workspace"))
+    assert result == "cidWarm"
+    out = capsys.readouterr().out
+    assert "Building devcontainer" not in out
+    assert "1-3 minutes" not in out
+    assert len(ran) == 1  # CLI still invoked; no short-circuit
+
+
+def test_up_exit_0_but_no_container_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defensive: if CLI exits 0 but no labelled container is found, raise
+    rather than returning an empty string."""
+    import moot.devcontainer as dc
+    monkeypatch.setattr(dc.shutil, "which", lambda _: "/usr/bin/devcontainer")
+    monkeypatch.setattr(dc, "container_id_or_none", lambda _ws: None)
+    monkeypatch.setattr(
+        dc.subprocess, "run", lambda *a, **kw: _fake_run(returncode=0)
     )
     with pytest.raises(DevcontainerError) as exc:
         up(Path("/tmp/workspace"))
-    assert "parse" in str(exc.value).lower()
+    assert "no running container" in str(exc.value).lower()
 
 
 # --- container_id_or_none ---

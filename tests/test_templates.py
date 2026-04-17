@@ -131,8 +131,9 @@ def test_post_create_no_convo_paths() -> None:
         assert pattern not in content, (
             f"post-create.sh contains forbidden pattern: {pattern}"
         )
-    # Must install moot
-    assert "pip install moot" in content, "post-create.sh should install moot"
+    # Must install the mootup package (PyPI name — the `moot` prefix
+    # catches the pre-Run-V typo by prefix, so assert the full name).
+    assert "pip install mootup" in content, "post-create.sh should install mootup"
 
 
 def test_runner_scripts_read_moot_toml() -> None:
@@ -152,6 +153,84 @@ def test_channel_runner_logs_stderr() -> None:
     content = (DEVCONTAINER_TEMPLATE_DIR / "run-moot-channel.sh").read_text()
     assert "2>" in content, "Channel runner should redirect stderr"
     assert "LOG_FILE" in content, "Channel runner should define LOG_FILE"
+
+
+def test_post_create_does_not_run_claude_install() -> None:
+    """post-create.sh does NOT invoke `claude install` — it deletes the npm binary.
+
+    Regression guard for Run V: `claude install` replaces
+    /usr/local/share/npm-global/bin/claude with ~/.local/bin/claude
+    and ~/.local/bin is not on the script's PATH, so the subsequent
+    `claude mcp add` lines fail with `claude: command not found`.
+    """
+    content = (DEVCONTAINER_TEMPLATE_DIR / "post-create.sh").read_text()
+    # Match only the command invocation, not text inside comments.
+    # Every non-comment line that starts with `claude install` (optionally
+    # preceded by whitespace) counts.
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        assert not stripped.startswith("claude install"), (
+            "post-create.sh must not run `claude install` (deletes npm binary; "
+            "breaks PATH for subsequent `claude mcp add` calls)"
+        )
+
+
+def test_post_create_uses_strict_mode() -> None:
+    """post-create.sh enables errexit + nounset + pipefail.
+
+    Accepts either a single `set -euo pipefail` line OR the equivalent
+    split form (`set -e`, `set -u`, `set -o pipefail`) as long as all
+    three are present before the first non-set, non-comment command.
+    """
+    content = (DEVCONTAINER_TEMPLATE_DIR / "post-create.sh").read_text()
+    has_errexit = False
+    has_nounset = False
+    has_pipefail = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("#!"):
+            continue
+        if stripped.startswith("set "):
+            # Parse flag tokens so combined -euo counts as e+u+o.
+            tokens = stripped.split()
+            flag_chars = ""
+            for tok in tokens[1:]:
+                if tok.startswith("-") and not tok.startswith("--") and tok != "-o":
+                    flag_chars += tok[1:]
+            if "e" in flag_chars or "errexit" in stripped:
+                has_errexit = True
+            if "u" in flag_chars or "nounset" in stripped:
+                has_nounset = True
+            if "pipefail" in stripped:
+                has_pipefail = True
+        else:
+            break  # first non-set command — stop checking
+    assert has_errexit, "post-create.sh must enable errexit (set -e)"
+    assert has_nounset, "post-create.sh must enable nounset (set -u)"
+    assert has_pipefail, "post-create.sh must enable pipefail (set -o pipefail)"
+
+
+def test_publish_doc_exists() -> None:
+    """docs/publish.md exists and is non-empty — PyPI publish runbook.
+
+    Product scope item 4 (Run V): the post-create.sh `pip install mootup`
+    path hard-depends on PyPI being current. The publish procedure must
+    be documented, not live only on Pat's laptop.
+    """
+    publish_doc = Path(__file__).parent.parent / "docs" / "publish.md"
+    assert publish_doc.exists(), f"Expected {publish_doc} to exist"
+    content = publish_doc.read_text()
+    assert len(content) > 200, (
+        f"docs/publish.md too short ({len(content)} bytes) — "
+        "should be a one-page runbook"
+    )
+    # Sanity: mentions the core tools used
+    for token in ("twine", "pypi", "mootup"):
+        assert token.lower() in content.lower(), (
+            f"docs/publish.md should reference {token!r}"
+        )
 
 
 # -- TeamProfile parsing tests -----------------------------------------------
