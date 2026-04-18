@@ -53,9 +53,31 @@ def test_provision_fresh_writes_moot_agents_fresh_json(
 
     respx.mock.get("https://mootup.io/api/actors/me").mock(
         return_value=Response(
-            200, json={"actor_id": "agt_u", "tenant_id": "ten_1"}
+            200,
+            json={
+                "actor_id": "agt_u",
+                "display_name": "Test User",
+                "actor_type": "human",
+                "sponsor_id": None,
+                "tenant_id": "ten_1",
+                "is_admin": False,
+                "email": None,
+                "agent_profile": None,
+                "api_key_prefix": None,
+                "default_space_id": None,
+                "is_connected": None,
+                "focus_space_id": None,
+                "metadata": None,
+                "last_seen_at": None,
+                "created_at": "2026-04-18T00:00:00+00:00",
+                "updated_at": "2026-04-18T00:00:00+00:00",
+            },
         )
     )
+    # NOTE: POST /api/tenants/{tenant_id}/agents is a phantom endpoint — not
+    # implemented on the convo backend at b6f6d13 (no matching route; not in
+    # openapi.yaml). cmd_provision would 404 in production. See
+    # docs/specs/oas-mock-refresh.md § 11.F2 — disposition deferred to Product.
     respx.mock.post("https://mootup.io/api/tenants/ten_1/agents").mock(
         return_value=Response(
             201, json={"actor_id": "agt_p", "api_key": "convo_key_fresh"}

@@ -14,33 +14,73 @@ from moot.scaffold import cmd_init
 from moot.config import ACTORS_JSON
 
 
+def _actor_dict(
+    *,
+    actor_id: str,
+    display_name: str,
+    actor_type: str = "agent",
+    sponsor_id: str | None = "usr_test_1",
+    api_key_prefix: str | None = None,
+    default_space_id: str | None = None,
+    is_connected: bool | None = False,
+) -> dict:
+    """Return a full Actor.model_dump() shape for respx mocks.
+
+    Field order and defaults match backend/core/models/models.py::Actor.
+    """
+    return {
+        "actor_id": actor_id,
+        "display_name": display_name,
+        "actor_type": actor_type,
+        "sponsor_id": sponsor_id,
+        "tenant_id": "ten_test_1",
+        "is_admin": False,
+        "email": None,
+        "agent_profile": None,
+        "api_key_prefix": api_key_prefix,
+        "default_space_id": default_space_id,
+        "is_connected": is_connected,
+        "focus_space_id": None,
+        "metadata": None,
+        "last_seen_at": None,
+        "created_at": "2026-04-18T00:00:00+00:00",
+        "updated_at": "2026-04-18T00:00:00+00:00",
+    }
+
+
 def _stub_backend(respx_mock: respx.Router, api_url: str) -> None:
-    """Stub the 4-call happy-path flow."""
+    """Stub the 3-call happy-path flow (post-Run-W scaffold).
+
+    Endpoints (all anchored to convo OAS b6f6d13):
+      GET  /api/actors/me                    — Actor.model_dump()
+      GET  /api/spaces/{space_id}            — 404 (no GET handler; scaffold falls back to space_id)
+      GET  /api/actors/me/agents             — list[Actor.model_dump()]
+      POST /api/actors/{actor_id}/rotate-key — Actor.model_dump() + api_key
+    """
     respx_mock.get(f"{api_url}/api/actors/me").mock(
         return_value=Response(
             200,
-            json={
-                "actor_id": "agt_user_1",
-                "display_name": "Test User",
-                "default_space_id": "spc_test_1",
-            },
+            json=_actor_dict(
+                actor_id="usr_user_1",
+                display_name="Test User",
+                actor_type="human",
+                sponsor_id=None,
+                default_space_id="spc_test_1",
+            ),
         )
     )
+    # GET /api/spaces/{id} is not implemented; scaffold swallows the 404.
     respx_mock.get(f"{api_url}/api/spaces/spc_test_1").mock(
-        return_value=Response(
-            200, json={"space_id": "spc_test_1", "name": "Test Space"}
-        )
+        return_value=Response(404, json={"detail": "Not found"})
     )
-    respx_mock.get(f"{api_url}/api/spaces/spc_test_1/participants").mock(
+    respx_mock.get(f"{api_url}/api/actors/me/agents").mock(
         return_value=Response(
             200,
             json=[
-                {
-                    "actor_id": f"agt_{role.lower()}_1",
-                    "display_name": role,
-                    "participant_type": "agent",
-                    "api_key_prefix": None,
-                }
+                _actor_dict(
+                    actor_id=f"agt_{role.lower()}_1",
+                    display_name=role,
+                )
                 for role in ("Product", "Spec", "Implementation", "QA")
             ],
         )
@@ -51,7 +91,14 @@ def _stub_backend(respx_mock: respx.Router, api_url: str) -> None:
         ).mock(
             return_value=Response(
                 200,
-                json={"api_key": f"convo_key_live_{role}"},
+                json={
+                    **_actor_dict(
+                        actor_id=f"agt_{role}_1",
+                        display_name=role.capitalize(),
+                        api_key_prefix="convo_ke",
+                    ),
+                    "api_key": f"convo_key_live_{role}",
+                },
             )
         )
 
@@ -361,28 +408,26 @@ def test_init_rotate_key_failure_does_not_persist(
     respx.mock.get(f"{api_url}/api/actors/me").mock(
         return_value=Response(
             200,
-            json={
-                "actor_id": "agt_user_1",
-                "display_name": "Test User",
-                "default_space_id": "spc_test_1",
-            },
+            json=_actor_dict(
+                actor_id="usr_user_1",
+                display_name="Test User",
+                actor_type="human",
+                sponsor_id=None,
+                default_space_id="spc_test_1",
+            ),
         )
     )
     respx.mock.get(f"{api_url}/api/spaces/spc_test_1").mock(
-        return_value=Response(
-            200, json={"space_id": "spc_test_1", "name": "Test Space"}
-        )
+        return_value=Response(404, json={"detail": "Not found"})
     )
-    respx.mock.get(f"{api_url}/api/spaces/spc_test_1/participants").mock(
+    respx.mock.get(f"{api_url}/api/actors/me/agents").mock(
         return_value=Response(
             200,
             json=[
-                {
-                    "actor_id": "agt_product_1",
-                    "display_name": "Product",
-                    "participant_type": "agent",
-                    "api_key_prefix": None,
-                }
+                _actor_dict(
+                    actor_id="agt_product_1",
+                    display_name="Product",
+                )
             ],
         )
     )

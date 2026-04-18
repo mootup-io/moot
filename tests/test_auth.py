@@ -105,7 +105,24 @@ def test_login_interactive_prompt_accepts_valid_pat(
     with respx.mock(base_url="https://mootup.io") as mock:
         mock.get("/api/actors/me").respond(
             200,
-            json={"actor_id": "usr_test", "display_name": "Test User"},
+            json={
+                "actor_id": "usr_test",
+                "display_name": "Test User",
+                "actor_type": "human",
+                "sponsor_id": None,
+                "tenant_id": "ten_test_1",
+                "is_admin": False,
+                "email": None,
+                "agent_profile": None,
+                "api_key_prefix": None,
+                "default_space_id": None,
+                "is_connected": None,
+                "focus_space_id": None,
+                "metadata": None,
+                "last_seen_at": None,
+                "created_at": "2026-04-18T00:00:00+00:00",
+                "updated_at": "2026-04-18T00:00:00+00:00",
+            },
         )
         asyncio.run(cmd_login(args))
 
@@ -137,7 +154,24 @@ def test_login_token_flag_bypasses_prompt(
     with respx.mock(base_url="https://mootup.io") as mock:
         mock.get("/api/actors/me").respond(
             200,
-            json={"actor_id": "usr_bypass", "display_name": "Bypass User"},
+            json={
+                "actor_id": "usr_bypass",
+                "display_name": "Bypass User",
+                "actor_type": "human",
+                "sponsor_id": None,
+                "tenant_id": "ten_test_1",
+                "is_admin": False,
+                "email": None,
+                "agent_profile": None,
+                "api_key_prefix": None,
+                "default_space_id": None,
+                "is_connected": None,
+                "focus_space_id": None,
+                "metadata": None,
+                "last_seen_at": None,
+                "created_at": "2026-04-18T00:00:00+00:00",
+                "updated_at": "2026-04-18T00:00:00+00:00",
+            },
         )
         asyncio.run(cmd_login(args))
 

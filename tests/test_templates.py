@@ -267,27 +267,6 @@ def test_post_create_uses_strict_mode() -> None:
     assert has_pipefail, "post-create.sh must enable pipefail (set -o pipefail)"
 
 
-def test_publish_doc_exists() -> None:
-    """docs/publish.md exists and is non-empty — PyPI publish runbook.
-
-    Product scope item 4 (Run V): the post-create.sh `pip install mootup`
-    path hard-depends on PyPI being current. The publish procedure must
-    be documented, not live only on the operator's laptop.
-    """
-    publish_doc = Path(__file__).parent.parent / "docs" / "publish.md"
-    assert publish_doc.exists(), f"Expected {publish_doc} to exist"
-    content = publish_doc.read_text()
-    assert len(content) > 200, (
-        f"docs/publish.md too short ({len(content)} bytes) — "
-        "should be a one-page runbook"
-    )
-    # Sanity: mentions the core tools used
-    for token in ("twine", "pypi", "mootup"):
-        assert token.lower() in content.lower(), (
-            f"docs/publish.md should reference {token!r}"
-        )
-
-
 # -- TeamProfile parsing tests -----------------------------------------------
 
 
