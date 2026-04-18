@@ -1,11 +1,11 @@
 """Tests for moot.toml config parsing."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
 import pytest
-
 
 SAMPLE_TOML = """\
 [convo]
@@ -59,6 +59,7 @@ def test_config_find_walks_parents(tmp_path: Path, monkeypatch: object) -> None:
     nested.mkdir(parents=True)
 
     import moot.config as config_mod
+
     monkeypatch.setattr(Path, "cwd", lambda: nested)  # type: ignore[arg-type]
 
     config = config_mod.find_config()
@@ -115,10 +116,10 @@ class TestAgentProfiles:
     def test_per_role_profile_round_trip(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "moot.toml"
         toml_path.write_text(
-            '[convo]\n'
+            "[convo]\n"
             'api_url = "https://x"\n'
-            '\n'
-            '[agents.spec]\n'
+            "\n"
+            "[agents.spec]\n"
             'display_name = "Spec"\n'
             'harness = "claude-code"\n'
             'model = "opus"\n'
@@ -137,15 +138,15 @@ class TestAgentProfiles:
     def test_global_defaults_cascade_to_agent(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "moot.toml"
         toml_path.write_text(
-            '[convo]\n'
+            "[convo]\n"
             'api_url = "https://x"\n'
-            '\n'
-            '[harness]\n'
+            "\n"
+            "[harness]\n"
             'type = "claude-code"\n'
             'model = "sonnet"\n'
             'effort = "medium"\n'
-            '\n'
-            '[agents.leader]\n'
+            "\n"
+            "[agents.leader]\n"
             'display_name = "Leader"\n'
         )
         from moot.config import MootConfig
@@ -160,10 +161,10 @@ class TestAgentProfiles:
     ) -> None:
         toml_path = tmp_path / "moot.toml"
         toml_path.write_text(
-            '[convo]\n'
+            "[convo]\n"
             'api_url = "https://x"\n'
-            '\n'
-            '[agents.spec]\n'
+            "\n"
+            "[agents.spec]\n"
             'display_name = "Spec"\n'
             'model = "sonet"\n'
         )
@@ -201,9 +202,17 @@ class TestModelAllowlistRegex:
         from moot.config import _MODEL_ALLOWLIST_RE
 
         good = [
-            "opus", "sonnet", "haiku", "best", "default",
-            "opusplan", "sonnet[1m]", "opus[1m]",
-            "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5",
+            "opus",
+            "sonnet",
+            "haiku",
+            "best",
+            "default",
+            "opusplan",
+            "sonnet[1m]",
+            "opus[1m]",
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
             "claude-opus-4-6",
         ]
         for alias in good:
@@ -213,17 +222,17 @@ class TestModelAllowlistRegex:
         from moot.config import _MODEL_ALLOWLIST_RE
 
         bad = [
-            "opsu",        # typo
-            "sonet",       # typo
-            "",            # empty
-            "claude-",     # incomplete full ID
-            "opus ",       # trailing space
-            " opus",       # leading space
+            "opsu",  # typo
+            "sonet",  # typo
+            "",  # empty
+            "claude-",  # incomplete full ID
+            "opus ",  # trailing space
+            " opus",  # leading space
         ]
         for alias in bad:
-            assert not _MODEL_ALLOWLIST_RE.match(alias), (
-                f"expected NO match for {alias!r}"
-            )
+            assert not _MODEL_ALLOWLIST_RE.match(
+                alias
+            ), f"expected NO match for {alias!r}"
 
 
 def test_get_actor_key_returns_role_key(
@@ -257,3 +266,141 @@ def test_get_actor_key_returns_role_key(
     assert get_actor_key("product") == "convo_key_p"
     assert get_actor_key("qa") == "convo_key_q"
     assert get_actor_key("missing") == ""
+
+
+class TestCmdConfigShow:
+    """Tests for `moot config show` output — Run AF."""
+
+    def _toml(self, body: str) -> str:
+        return '[convo]\napi_url = "https://x"\n\n' + body
+
+    def _run_show(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        body: str,
+    ) -> str:
+        (tmp_path / "moot.toml").write_text(self._toml(body))
+        monkeypatch.chdir(tmp_path)
+        from argparse import Namespace
+        from moot.config import cmd_config
+
+        cmd_config(Namespace(config_command="show"))
+        return capsys.readouterr().out
+
+    def test_config_show_prints_all_fields(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        out = self._run_show(
+            tmp_path,
+            monkeypatch,
+            capsys,
+            "[agents.spec]\n"
+            'display_name = "Spec"\n'
+            'harness = "claude-code"\n'
+            'model = "opus"\n'
+            'effort = "high"\n'
+            'theme = "magenta"\n',
+        )
+        assert "Roles:" in out
+        assert "spec" in out
+        assert "harness=claude-code" in out
+        assert "model=opus" in out
+        assert "effort=high" in out
+        assert "theme=magenta" in out
+
+    def test_config_show_cascade_indicator(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        out = self._run_show(
+            tmp_path,
+            monkeypatch,
+            capsys,
+            "[harness]\n"
+            'type = "claude-code"\n'
+            'model = "sonnet"\n'
+            'effort = "medium"\n'
+            "\n"
+            "[agents.leader]\n"
+            'display_name = "Leader"\n',
+        )
+        assert "Global defaults: model=sonnet  effort=medium" in out
+        assert "model=sonnet (default)" in out
+        assert "effort=medium (default)" in out
+
+    def test_config_show_role_default_theme(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        out = self._run_show(
+            tmp_path,
+            monkeypatch,
+            capsys,
+            "[agents.product]\n" 'display_name = "Product"\n',
+        )
+        # Product maps to blue in _ADOPTED_ROLE_DEFAULTS; role-derived default
+        # renders with (role default) tag.
+        assert "theme=blue (role default)" in out
+
+    def test_config_show_preserves_existing_fields(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        out = self._run_show(
+            tmp_path,
+            monkeypatch,
+            capsys,
+            "[harness]\n"
+            'type = "claude-code"\n'
+            "\n"
+            "[agents.spec]\n"
+            'display_name = "Spec"\n',
+        )
+        assert "API URL: https://x" in out
+        assert "Harness: claude-code" in out
+        # No Global defaults line when both model + effort unset globally.
+        assert "Global defaults:" not in out
+        # Unknown/unmapped field renders (unset).
+        assert "effort=(unset)" in out
+
+    def test_config_show_unknown_role_theme_unset(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Role not in _ADOPTED_ROLE_DEFAULTS → theme=(unset); guards against
+        # AttributeError from the .get({}).get("theme") chain.
+        out = self._run_show(
+            tmp_path,
+            monkeypatch,
+            capsys,
+            "[agents.custom-role]\n" 'display_name = "Custom"\n',
+        )
+        assert "theme=(unset)" in out
+
+    def test_config_show_no_config(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # No moot.toml present → "no moot.toml found" error + SystemExit(1).
+        monkeypatch.chdir(tmp_path)
+        from argparse import Namespace
+        from moot.config import cmd_config
+        import pytest as _pytest
+
+        with _pytest.raises(SystemExit) as exc_info:
+            cmd_config(Namespace(config_command="show"))
+        assert exc_info.value.code == 1

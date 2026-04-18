@@ -1,4 +1,5 @@
 """moot.toml and .moot/actors.json loaders."""
+
 from __future__ import annotations
 
 import json
@@ -49,6 +50,7 @@ class AgentConfig:
         self.model: str | None = data.get("model", default_model)
         self.effort: str | None = data.get("effort", default_effort)
         self.theme: str | None = data.get("theme")
+        self._raw: dict[str, Any] = data
         self._validate()
 
     def _validate(self) -> None:
@@ -186,9 +188,7 @@ def _set_convo_key(key: str, value: str) -> None:
     # Match an existing line (commented or not) for this key. Catches:
     #   key = "..."
     #   # key = ""  # any trailing comment
-    pattern = re.compile(
-        rf'^[ \t]*#?\s*{re.escape(key)}\s*=.*$', re.MULTILINE
-    )
+    pattern = re.compile(rf"^[ \t]*#?\s*{re.escape(key)}\s*=.*$", re.MULTILINE)
     replacement = f'{key} = "{value}"'
     if pattern.search(text):
         new_text = pattern.sub(replacement, text, count=1)
@@ -196,7 +196,7 @@ def _set_convo_key(key: str, value: str) -> None:
         # Inject under [convo] header. Match the first non-empty/non-comment
         # line after [convo] and insert before it. Fail loudly if [convo]
         # header is missing — moot.toml without it is malformed.
-        convo_header = re.search(r'^\[convo\]\s*$', text, re.MULTILINE)
+        convo_header = re.search(r"^\[convo\]\s*$", text, re.MULTILINE)
         if not convo_header:
             print(f"Error: {MOOT_TOML} has no [convo] section to update.")
             raise SystemExit(1)
@@ -204,7 +204,21 @@ def _set_convo_key(key: str, value: str) -> None:
         new_text = text[:insert_pos] + replacement + "\n" + text[insert_pos:]
 
     toml_path.write_text(new_text)
-    print(f"Set [convo].{key} = \"{value}\" in {MOOT_TOML}")
+    print(f'Set [convo].{key} = "{value}" in {MOOT_TOML}')
+
+
+def _render_with_default(value: str | None, default: str | None, tag: str) -> str:
+    """Render a field for `moot config show` output.
+
+    If `value` is not None (i.e., the role set the field explicitly in TOML),
+    return it. If the role omits it but a default (global or role-derived)
+    exists, return "<default> <tag>". If neither is set, return "(unset)".
+    """
+    if value is not None:
+        return value
+    if default is not None:
+        return f"{default} {tag}"
+    return "(unset)"
 
 
 def cmd_config(args: object) -> None:
@@ -214,11 +228,32 @@ def cmd_config(args: object) -> None:
     if not config:
         print("Error: no moot.toml found. Run 'moot init' first.")
         raise SystemExit(1)
+    from moot.scaffold import _ADOPTED_ROLE_DEFAULTS
+
     if sub == "show" or sub is None:
         print(f"API URL: {config.api_url}")
         print(f"Space ID: {config.space_id or '(not set)'}")
         print(f"Harness: {config.harness_type}")
-        print(f"Roles: {', '.join(config.roles)}")
+        gm = config.default_model
+        ge = config.default_effort
+        if gm is not None or ge is not None:
+            gm_s = gm if gm is not None else "(unset)"
+            ge_s = ge if ge is not None else "(unset)"
+            print(f"Global defaults: model={gm_s}  effort={ge_s}")
+        print("Roles:")
+        for role_name, agent in config.agents.items():
+            raw_model = agent._raw.get("model")
+            raw_effort = agent._raw.get("effort")
+            model = _render_with_default(raw_model, gm, "(default)")
+            effort = _render_with_default(raw_effort, ge, "(default)")
+            theme_default = _ADOPTED_ROLE_DEFAULTS.get(role_name.lower(), {}).get(
+                "theme"
+            )
+            theme = _render_with_default(agent.theme, theme_default, "(role default)")
+            print(
+                f"  {role_name:<16} harness={agent.harness}  "
+                f"model={model}  effort={effort}  theme={theme}"
+            )
     elif sub == "set":
         key = getattr(args, "key")
         value = getattr(args, "value")
