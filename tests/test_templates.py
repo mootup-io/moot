@@ -105,6 +105,37 @@ def test_skills_bundle_complete() -> None:
             )
 
 
+def test_memory_audit_skill_structure() -> None:
+    """memory-audit SKILL.md has frontmatter, required sections, and the three-criterion rubric anchors."""
+    skill_md = SKILLS_TEMPLATE_DIR / "memory-audit" / "SKILL.md"
+    assert skill_md.exists(), f"memory-audit/SKILL.md missing: {skill_md}"
+    content = skill_md.read_text()
+
+    assert content.startswith("---\n"), "skill must start with YAML frontmatter"
+    assert "name: memory-audit\n" in content
+    assert "description:" in content.split("---\n", 2)[1]
+
+    for heading in (
+        "## Purpose",
+        "## When to invoke",
+        "## Who runs it",
+        "## The three-criterion promotion rubric",
+        "## Classification outcomes",
+        "## Execution recipe",
+    ):
+        assert heading in content, f"skill missing required heading: {heading}"
+
+    for anchor in ("Validated across", "Operator-agnostic", "Describes a rule"):
+        assert anchor in content, f"skill missing rubric anchor: {anchor}"
+
+    for bucket in ("(a)", "(b)", "(c)", "(d)"):
+        assert bucket in content, f"skill missing classification bucket {bucket}"
+
+    assert 'grep="^memory audit:"' in content, (
+        "skill must include the git-log count-derivation recipe anchored on 'memory audit:' commit subjects"
+    )
+
+
 def test_devcontainer_no_convo_customizations() -> None:
     """devcontainer.json has no mounts or convo-specific extensions/runArgs.
 

@@ -40,6 +40,7 @@ BUNDLED_SKILLS = (
     "handoff",
     "verify",
     "doc-curation",
+    "memory-audit",
 )
 
 

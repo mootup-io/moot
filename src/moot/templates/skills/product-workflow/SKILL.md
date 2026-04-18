@@ -62,6 +62,8 @@ After QA verifies and Leader confirms a feature has shipped, Spec/Impl/QA each p
 
 **Product reads retros and takes action** before the next run kicks off. Actions include updating CLAUDE.md, creating/updating memory files, modifying skills, or changing agent prompts. Observations without actions mean the same feedback surfaces next retro. Actions that would change the topology are rejected on principle — they go back as "performance/communication changes only."
 
+**Invoke `memory-audit` during synthesis.** After posting the retro-synthesis commit, invoke the `memory-audit` skill. The skill computes the count of synthesis commits since the last `memory audit:` commit and runs the audit if the count has reached five. The skill is fast (a no-op in four out of five invocations) and keeps the memory/documentation drift bounded.
+
 **Spike before speccing tooling:** For infrastructure or CLI-interaction features (shell scripts, devcontainer setup, agent interaction), do a quick manual spike to validate assumptions before writing a full spec. Platform code (APIs, frontends) is predictable enough for spec-first. Shell + CLI interaction is not.
 
 **Failed approaches:** If an approach fails, revert fully and keep the docs. The reverted spec provides negative-space constraints ("what doesn't work and why") that accelerate the redesign.
