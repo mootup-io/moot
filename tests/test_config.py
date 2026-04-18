@@ -111,6 +111,121 @@ def test_load_actors_parses_nested_schema(
     assert data["actors"]["product"]["api_key"] == "convo_key_p"
 
 
+class TestAgentProfiles:
+    def test_per_role_profile_round_trip(self, tmp_path: Path) -> None:
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            '[convo]\n'
+            'api_url = "https://x"\n'
+            '\n'
+            '[agents.spec]\n'
+            'display_name = "Spec"\n'
+            'harness = "claude-code"\n'
+            'model = "opus"\n'
+            'effort = "high"\n'
+            'theme = "magenta"\n'
+        )
+        from moot.config import MootConfig
+
+        config = MootConfig(toml_path)
+        spec = config.agents["spec"]
+        assert spec.harness == "claude-code"
+        assert spec.model == "opus"
+        assert spec.effort == "high"
+        assert spec.theme == "magenta"
+
+    def test_global_defaults_cascade_to_agent(self, tmp_path: Path) -> None:
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            '[convo]\n'
+            'api_url = "https://x"\n'
+            '\n'
+            '[harness]\n'
+            'type = "claude-code"\n'
+            'model = "sonnet"\n'
+            'effort = "medium"\n'
+            '\n'
+            '[agents.leader]\n'
+            'display_name = "Leader"\n'
+        )
+        from moot.config import MootConfig
+
+        config = MootConfig(toml_path)
+        leader = config.agents["leader"]
+        assert leader.model == "sonnet"
+        assert leader.effort == "medium"
+
+    def test_invalid_model_rejects_at_load(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            '[convo]\n'
+            'api_url = "https://x"\n'
+            '\n'
+            '[agents.spec]\n'
+            'display_name = "Spec"\n'
+            'model = "sonet"\n'
+        )
+        from moot.config import MootConfig
+
+        with pytest.raises(SystemExit) as excinfo:
+            MootConfig(toml_path)
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "spec" in captured.out
+        assert "not a recognized Claude model alias" in captured.out
+
+    def test_migration_v1_toml_still_loads(self, tmp_path: Path) -> None:
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(SAMPLE_TOML)  # pre-run schema
+        from moot.config import MootConfig
+
+        config = MootConfig(toml_path)
+        for role in config.agents.values():
+            assert role.model is None
+            assert role.effort is None
+            assert role.theme is None
+
+
+class TestModelAllowlistRegex:
+    """Regression guard for _MODEL_ALLOWLIST_RE: known-good aliases must
+    match; known-bad strings (typos, whitespace, empty) must not.
+
+    Protects against accidental regex tightening (e.g., dropping the
+    claude-* passthrough) or loosening (e.g., letting whitespace slip
+    through to the CLI flag).
+    """
+
+    def test_known_good_aliases_match(self) -> None:
+        from moot.config import _MODEL_ALLOWLIST_RE
+
+        good = [
+            "opus", "sonnet", "haiku", "best", "default",
+            "opusplan", "sonnet[1m]", "opus[1m]",
+            "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5",
+            "claude-opus-4-6",
+        ]
+        for alias in good:
+            assert _MODEL_ALLOWLIST_RE.match(alias), f"expected match for {alias!r}"
+
+    def test_known_bad_strings_rejected(self) -> None:
+        from moot.config import _MODEL_ALLOWLIST_RE
+
+        bad = [
+            "opsu",        # typo
+            "sonet",       # typo
+            "",            # empty
+            "claude-",     # incomplete full ID
+            "opus ",       # trailing space
+            " opus",       # leading space
+        ]
+        for alias in bad:
+            assert not _MODEL_ALLOWLIST_RE.match(alias), (
+                f"expected NO match for {alias!r}"
+            )
+
+
 def test_get_actor_key_returns_role_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

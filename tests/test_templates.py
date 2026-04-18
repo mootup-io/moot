@@ -316,6 +316,11 @@ class TestTeamProfileParsing:
         assert profile.git.ownership["main_branch"] == "product"
         assert profile.workflow.threads["feature"] == "[FEATURE]"
         assert profile.workflow.threads["question"] == "[QUESTION]"
+        by_name = {r.name: r for r in profile.roles}
+        assert by_name["product"].model == "opus"
+        assert by_name["spec"].model == "opus"
+        assert by_name["implementation"].model == "opus"
+        assert by_name["qa"].model == "sonnet"
 
     def test_parse_loop3_team_toml(self) -> None:
         """Parse loop-3 team.toml. Assert 3 roles, correct pipeline."""
@@ -534,6 +539,54 @@ class TestTeamTemplatesQA:
         # Only one is in the pipeline (leader dispatches)
         assert "implementation_a" in profile.workflow.pipeline
 
+    def test_team_toml_models_match_D1_defaults(self) -> None:
+        """Every role with a display_name in _expected_models must carry the
+        D1-mapped model across all 5 bundled templates. Drift-catches a
+        template file losing or renaming its `model` key."""
+        _expected_models = {
+            "Product": "opus",
+            "Leader": "sonnet",
+            "Spec": "opus",
+            "Implementation": "opus",
+            "Implementation A": "opus",
+            "Implementation B": "opus",
+            "Lead": "sonnet",
+            "QA": "sonnet",
+            "Verifier": "sonnet",
+            "Librarian": "sonnet",
+        }
+        for d in sorted(TEAMS_DIR.iterdir()):
+            if not d.is_dir():
+                continue
+            profile = TeamProfile.from_toml(d / "team.toml")
+            for role in profile.roles:
+                if role.display_name in _expected_models:
+                    assert role.model == _expected_models[role.display_name], (
+                        f"{d.name}/{role.name}: expected model "
+                        f"{_expected_models[role.display_name]!r}, "
+                        f"got {role.model!r}"
+                    )
+
+    def test_generate_moot_toml_emits_per_role_model_and_theme(self) -> None:
+        """generate_moot_toml must emit model + theme per [agents.<role>]
+        block when the RoleProfile carries them. Drift-catches the
+        generator forgetting per-role fields."""
+        path = TEAMS_DIR / "loop-4" / "team.toml"
+        profile = TeamProfile.from_toml(path)
+        content = generate_moot_toml(profile, "https://example.com")
+        data = tomllib.loads(content)
+
+        for role_name in ("product", "spec", "implementation", "qa"):
+            agent = data["agents"][role_name]
+            assert isinstance(agent.get("model"), str), (
+                f"[agents.{role_name}] missing string `model` key"
+            )
+            assert isinstance(agent.get("theme"), str), (
+                f"[agents.{role_name}] missing string `theme` key"
+            )
+        assert data["agents"]["product"]["model"] == "opus"
+        assert data["agents"]["product"]["theme"] == "blue"
+
     def test_generate_moot_toml_loop3(self) -> None:
         """Generate moot.toml from loop-3. Assert 3 agent sections."""
         profile = TeamProfile.from_toml(TEAMS_DIR / "loop-3" / "team.toml")
@@ -602,3 +655,36 @@ def test_claude_template_matches_convo() -> None:
         assert moot_bytes == convo_bytes, (
             f"byte-mismatch on {rel}: convo vs moot template differ"
         )
+
+
+# -- QA-suggested: per-template generation fuzz (§ 7.2) ----------------------
+
+
+class TestPerTemplateGenerationFuzz:
+    """Parse each bundled template → generate moot.toml → re-parse with
+    MootConfig to confirm the generated output is valid end-to-end.
+
+    Catches schema drift where team.toml or the generator emits a value
+    that AgentConfig's validator rejects (e.g., a model alias that no
+    longer matches _MODEL_ALLOWLIST_RE, or a theme that slips a newline).
+    """
+
+    @pytest.mark.parametrize(
+        "template_name",
+        ["loop-3", "loop-4", "loop-4-observer", "loop-4-parallel", "loop-4-split-leader"],
+    )
+    def test_generate_and_reparse_no_validation_error(
+        self, template_name: str, tmp_path: Path
+    ) -> None:
+        from moot.config import MootConfig
+
+        team_toml_path = TEAMS_DIR / template_name / "team.toml"
+        profile = TeamProfile.from_toml(team_toml_path)
+        generated = generate_moot_toml(profile, "https://example.com:8443")
+
+        moot_toml_path = tmp_path / "moot.toml"
+        moot_toml_path.write_text(generated)
+
+        # Should not raise SystemExit(1) from any validation error.
+        config = MootConfig(moot_toml_path)
+        assert config.agents, f"{template_name}: generated moot.toml has no agents"

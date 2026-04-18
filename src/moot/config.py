@@ -11,9 +11,28 @@ MOOT_TOML = "moot.toml"
 MOOT_DIR = ".moot"
 ACTORS_JSON = f"{MOOT_DIR}/actors.json"
 
+_HARNESS_ALLOWLIST = {"claude-code", "cursor", "aider"}
+_MODEL_ALLOWLIST_RE = re.compile(
+    r"^(opus|sonnet|haiku|best|default|opusplan|sonnet\[1m\]|opus\[1m\]|claude-[a-z0-9-]+)$"
+)
+_EFFORT_ALLOWLIST = {"low", "medium", "high", "xhigh", "max"}
+
+
+def _config_error(msg: str) -> None:
+    print(f"Error: {msg}")
+    raise SystemExit(1)
+
 
 class AgentConfig:
-    def __init__(self, role: str, data: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        role: str,
+        data: dict[str, Any],
+        *,
+        default_harness: str = "claude-code",
+        default_model: str | None = None,
+        default_effort: str | None = None,
+    ) -> None:
         self.role = role
         self.display_name: str = data.get("display_name", role.title())
         self.profile: str = data.get("profile", "devcontainer")
@@ -26,6 +45,30 @@ class AgentConfig:
                 f"status_update confirming you are online."
             ),
         )
+        self.harness: str = data.get("harness", default_harness)
+        self.model: str | None = data.get("model", default_model)
+        self.effort: str | None = data.get("effort", default_effort)
+        self.theme: str | None = data.get("theme")
+        self._validate()
+
+    def _validate(self) -> None:
+        if self.harness not in _HARNESS_ALLOWLIST:
+            _config_error(
+                f"agents.{self.role}.harness = {self.harness!r} is not one of "
+                f"{sorted(_HARNESS_ALLOWLIST)}"
+            )
+        if self.model is not None and not _MODEL_ALLOWLIST_RE.match(self.model):
+            _config_error(
+                f"agents.{self.role}.model = {self.model!r} is not a recognized "
+                f"Claude model alias or full ID. Valid aliases: opus, sonnet, "
+                f"haiku, best, default, opusplan, sonnet[1m], opus[1m]. Full "
+                f"IDs must match claude-<identifier>."
+            )
+        if self.effort is not None and self.effort not in _EFFORT_ALLOWLIST:
+            _config_error(
+                f"agents.{self.role}.effort = {self.effort!r} is not one of "
+                f"{sorted(_EFFORT_ALLOWLIST)}"
+            )
 
 
 class MootConfig:
@@ -38,9 +81,17 @@ class MootConfig:
         harness = data.get("harness", {})
         self.harness_type: str = harness.get("type", "claude-code")
         self.permissions: str = harness.get("permissions", "dangerously-skip")
+        self.default_model: str | None = harness.get("model")
+        self.default_effort: str | None = harness.get("effort")
         self.agents: dict[str, AgentConfig] = {}
         for role, agent_data in data.get("agents", {}).items():
-            self.agents[role] = AgentConfig(role, agent_data)
+            self.agents[role] = AgentConfig(
+                role,
+                agent_data,
+                default_harness=self.harness_type,
+                default_model=self.default_model,
+                default_effort=self.default_effort,
+            )
         # Role the operator talks to directly. `moot up` launches this one
         # first on a cold start (no claude credentials yet) so first-time login
         # happens through its tmux session — the rest of the team starts

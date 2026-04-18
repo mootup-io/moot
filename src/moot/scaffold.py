@@ -282,6 +282,21 @@ def _write_actors_json(
     os.chmod(actors_path, 0o600)
 
 
+# D1 defaults — mapping from adopted display_name (lowercased) to the
+# recommended per-role model. Unknown roles fall through with no model
+# set, which means Claude Code's account default applies. Theme map
+# matches the bundled team templates for visual consistency.
+_ADOPTED_ROLE_DEFAULTS: dict[str, dict[str, str]] = {
+    "product":        {"model": "opus",   "theme": "blue"},
+    "leader":         {"model": "sonnet", "theme": "yellow"},
+    "spec":           {"model": "opus",   "theme": "magenta"},
+    "implementation": {"model": "opus",   "theme": "cyan"},
+    "qa":             {"model": "sonnet", "theme": "green"},
+    "verifier":       {"model": "sonnet", "theme": "green"},  # loop-3 display_name
+    "librarian":      {"model": "sonnet", "theme": "white"},
+}
+
+
 def _write_moot_toml_from_adopted(
     *,
     adopted: dict[str, dict[str, str]],
@@ -311,11 +326,14 @@ def _write_moot_toml_from_adopted(
         origin="moot-init-adoption",
     )
     for role_key, info in adopted.items():
+        defaults = _ADOPTED_ROLE_DEFAULTS.get(info["display_name"].lower(), {})
         profile.roles.append(
             RoleProfile(
                 name=role_key,
                 display_name=info["display_name"],
                 harness="claude-code",
+                model=defaults.get("model"),
+                theme=defaults.get("theme"),
             )
         )
     content = generate_moot_toml(profile, api_url, space_id=space_id)

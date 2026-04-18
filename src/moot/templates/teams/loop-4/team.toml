@@ -11,6 +11,8 @@ origin = "Observed from Convo project's agent team, April 2026"
 name = "product"
 display_name = "Product"
 harness = "claude-code"
+model = "opus"
+theme = "blue"
 responsibilities = """
 Product direction, prioritization, feature scoping. Owns git operations
 (commits, branches, merges). Kicks off features, monitors pipeline,
@@ -26,6 +28,8 @@ Post a status_update confirming you are online."""
 name = "spec"
 display_name = "Spec"
 harness = "claude-code"
+model = "opus"
+theme = "magenta"
 responsibilities = """
 Design docs, specifications, test plans, architecture review. Verifies
 technical claims against the codebase. Each spec includes security
@@ -40,6 +44,8 @@ Post a status_update confirming you are online. Wait for work."""
 name = "implementation"
 display_name = "Implementation"
 harness = "claude-code"
+model = "opus"
+theme = "cyan"
 responsibilities = """
 Code implementation based on specs. Writes common-case behavioral tests
 before handoff (pipeline gate). Follows spec precisely -- asks for
@@ -53,6 +59,8 @@ the channel. Post a status_update confirming you are online. Wait for work."""
 name = "qa"
 display_name = "QA"
 harness = "claude-code"
+model = "sonnet"
+theme = "green"
 responsibilities = """
 Test strategy, test implementation, feature verification. Owns the docker
 compose stack. Extends test coverage beyond spec requirements based on

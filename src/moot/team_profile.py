@@ -19,6 +19,9 @@ class RoleProfile:
     harness: str = "claude-code"
     responsibilities: str = ""
     startup_prompt: str = ""
+    model: str | None = None
+    effort: str | None = None
+    theme: str | None = None
 
 
 @dataclass
@@ -79,6 +82,9 @@ class TeamProfile:
                 harness=role_data.get("harness", "claude-code"),
                 responsibilities=role_data.get("responsibilities", "").strip(),
                 startup_prompt=role_data.get("startup_prompt", "").strip(),
+                model=role_data.get("model"),
+                effort=role_data.get("effort"),
+                theme=role_data.get("theme"),
             ))
 
         # Parse workflow
@@ -184,6 +190,16 @@ def generate_moot_toml(
         prompt = role.startup_prompt.replace("\n", " ").strip()
         prompt = prompt.replace('"', '\\"')
         lines.append(f'startup_prompt = "{prompt}"')
+        # Per-role harness/model/effort/theme — emit only when set so
+        # absent keys mean "fall through to global defaults".
+        if role.harness and role.harness != "claude-code":
+            lines.append(f'harness = "{role.harness}"')
+        if role.model:
+            lines.append(f'model = "{role.model}"')
+        if role.effort:
+            lines.append(f'effort = "{role.effort}"')
+        if role.theme:
+            lines.append(f'theme = "{role.theme}"')
         lines.append("")
 
     # Use the first role's harness as default

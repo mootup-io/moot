@@ -8,8 +8,13 @@ import pytest
 
 
 @pytest.fixture
-def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Install a fake MootConfig + get_actor_key pair."""
+def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
+    """Install a fake MootConfig + get_actor_key pair.
+
+    Returns the single FakeConfig instance so tests can mutate per-role
+    profile fields (model/effort/theme) before invoking the launcher —
+    every ``find_config()`` call returns the same instance.
+    """
     import moot.launch as launch
 
     class FakeAgent:
@@ -17,6 +22,10 @@ def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             self.role = role
             self.display_name = role.title()
             self.startup_prompt = f"Hello {role}"
+            self.harness: str = "claude-code"
+            self.model: str | None = None
+            self.effort: str | None = None
+            self.theme: str | None = None
 
     class FakeConfig:
         def __init__(self) -> None:
@@ -29,18 +38,27 @@ def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             # cascade pin a specific role by monkeypatching if needed.
             self.human_interface = "spec"
 
-    monkeypatch.setattr(launch, "find_config", lambda: FakeConfig())
+    fake_config = FakeConfig()
+    monkeypatch.setattr(launch, "find_config", lambda: fake_config)
     # cwd.name is used in _launch_role to compute the in-container
     # workspace path. Use tmp_path itself — its basename is a random slug,
     # fine for tests that don't assert on the project name.
     monkeypatch.chdir(tmp_path)
+    return fake_config
 
 
 def test_cmd_exec_launch_full_flow(
-    monkeypatch: pytest.MonkeyPatch, patch_config: None
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
 ) -> None:
     """cmd_exec boots the container, creates worktree, fires tmux command."""
     import moot.launch as launch
+
+    # Set per-role profile fields so the full_flow assertions below can
+    # verify --model / --effort / pane-border-style wiring end-to-end.
+    spec_agent = patch_config.agents["spec"]  # type: ignore[attr-defined]
+    spec_agent.model = "opus"
+    spec_agent.effort = "high"
+    spec_agent.theme = "cyan"
 
     captured_args: list[list[str]] = []
     captured_env: list[dict[str, str] | None] = []
@@ -110,6 +128,89 @@ def test_cmd_exec_launch_full_flow(
     # secret off every command line.
     assert "CONVO_API_KEY" not in env
     assert "CONVO_API_KEY" not in script
+
+    # Per-role profile flags reach the claude invocation + tmux theme.
+    assert "--model opus" in script
+    assert "--effort high" in script
+    assert "pane-border-style fg=cyan" in script
+    # pane-border-status must be set BEFORE pane-border-style so the
+    # colored border is visible in single-pane sessions (wrong order →
+    # silently ignored in some tmux versions).
+    assert script.index("pane-border-status") < script.index("pane-border-style")
+
+
+def test_cmd_exec_launch_no_flags_when_unset(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
+) -> None:
+    """Absent model/effort/theme → no --model, --effort, or pane-border
+    calls in the emitted bash script. Lets Claude Code's account default
+    model + tmux's default border style apply."""
+    import moot.launch as launch
+
+    captured_args: list[list[str]] = []
+    monkeypatch.setattr(launch, "up", lambda wd: "cidNoFlags")
+
+    def fake_exec_capture(
+        container_id: str, args: list[str], env: dict[str, str] | None = None
+    ) -> tuple[int, str, str]:
+        captured_args.append(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return (1, "", "")
+        if args[0] == "test" and args[1] == "-d":
+            return (1, "", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+    monkeypatch.setattr(launch, "exec_detached", lambda *a, **kw: None)
+    monkeypatch.setattr(launch, "container_id_or_none", lambda wd: "cidNoFlags")
+
+    ns = argparse.Namespace(role="spec", prompt=None)
+    launch.cmd_exec(ns)
+
+    tmux_indices = [
+        i for i, a in enumerate(captured_args) if a[:2] == ["bash", "-lc"]
+    ]
+    assert tmux_indices, "expected a bash -lc ... call for tmux new-session"
+    script = captured_args[tmux_indices[-1]][2]
+    assert "--model" not in script
+    assert "--effort" not in script
+    assert "pane-border-status" not in script
+    assert "pane-border-style" not in script
+
+
+def test_cmd_exec_cursor_harness_errors_cleanly(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Per-role harness='cursor' errors out with 'not yet supported' — unchanged
+    behavior. Regression guard so cursor/aider dispatch doesn't silently break
+    when launch.py is edited."""
+    import moot.launch as launch
+
+    cursor_agent = patch_config.agents["spec"]  # type: ignore[attr-defined]
+    cursor_agent.harness = "cursor"
+
+    monkeypatch.setattr(launch, "up", lambda wd: "cidCursor")
+    monkeypatch.setattr(launch, "container_id_or_none", lambda wd: "cidCursor")
+
+    def fake_exec_capture(
+        container_id: str, args: list[str], env: dict[str, str] | None = None
+    ) -> tuple[int, str, str]:
+        if args[:3] == ["test", "-s", launch.CREDENTIALS_PATH]:
+            return (0, "", "")  # creds present
+        if args[:2] == ["tmux", "has-session"]:
+            return (1, "", "")  # no existing session
+        if args[0] == "test" and args[1] == "-d":
+            return (1, "", "")  # worktree absent
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+    monkeypatch.setattr(launch, "exec_detached", lambda *a, **kw: None)
+
+    ns = argparse.Namespace(role="spec", prompt=None)
+    with pytest.raises(SystemExit) as exc:
+        launch.cmd_exec(ns)
+    assert exc.value.code == 1
+    assert "not yet supported" in capsys.readouterr().out
 
 
 def test_cmd_exec_session_already_running(

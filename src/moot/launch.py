@@ -185,22 +185,36 @@ def _launch_role(
     agent_config = config.agents[role]
     prompt = prompt_override or agent_config.startup_prompt
 
+    # Per-role harness selection. Falls back to the global default set
+    # on AgentConfig at moot.toml-load time.
+    harness = agent_config.harness
+
     # The claude command is built INLINE (per D2). The two literal strings
     # '--dangerously-load-development-channels' and 'server:convo-channel'
     # ALSO appear in cmd_exec's docstring as an anchor for the existing
     # inspect.getsource-based test (test_launch_includes_channel_flag).
-    match config.harness_type:
+    match harness:
         case "claude-code":
-            # Use `--` to seed the first user turn while keeping claude in
-            # interactive TUI mode. `-p` runs in print mode and exits as
-            # soon as the response is emitted, which kills the tmux session.
+            # Per-role --model / --effort when set. Absent flags let
+            # Claude Code's account defaults apply.
+            model_flag = (
+                f"--model {shlex.quote(agent_config.model)} "
+                if agent_config.model
+                else ""
+            )
+            effort_flag = (
+                f"--effort {shlex.quote(agent_config.effort)} "
+                if agent_config.effort
+                else ""
+            )
             claude_cmd = (
                 "claude "
                 "--dangerously-load-development-channels server:convo-channel "
+                f"{model_flag}{effort_flag}"
                 f"-- {shlex.quote(prompt)}"
             )
         case _:
-            print(f"Error: harness '{config.harness_type}' not yet supported")
+            print(f"Error: harness '{harness}' not yet supported")
             raise SystemExit(1)
 
     # Per-role env that MUST override the tmux server's env. Tmux sessions
@@ -229,6 +243,19 @@ def _launch_role(
         f"-c {shlex.quote(wt_path)} "
         f"-- {claude_cmd}"
     )
+
+    # Per-role tmux theme: turn on pane-border-status so the color is
+    # visible even in single-pane sessions, then set the border color.
+    # Theme is applied after new-session since new-session -d returns
+    # immediately. Skipped when the role has no theme configured —
+    # default tmux border style is preserved in that case.
+    if agent_config.theme:
+        theme_q = shlex.quote(agent_config.theme)
+        session_q = shlex.quote(session)
+        tmux_cmd += (
+            f" && tmux set-option -t {session_q} pane-border-status top"
+            f" && tmux set-option -t {session_q} pane-border-style fg={theme_q}"
+        )
 
     # docker exec env: shared settings that become the tmux SERVER env on
     # first launch and are inherited by all subsequent sessions (since

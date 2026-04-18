@@ -10,6 +10,8 @@ origin = "Reduced loop-4; same pattern as the markdraft example"
 name = "leader"
 display_name = "Leader"
 harness = "claude-code"
+model = "sonnet"
+theme = "yellow"
 responsibilities = """
 Product direction, prioritization, feature scoping, and team coordination.
 Owns git operations (commits, branches, merges). Scopes work directly
@@ -24,6 +26,8 @@ Post a status_update confirming you are online."""
 name = "implementation"
 display_name = "Implementation"
 harness = "claude-code"
+model = "opus"
+theme = "cyan"
 responsibilities = """
 Code implementation based on leader's scope. Writes common-case behavioral
 tests before handoff (pipeline gate). Follows scope precisely -- asks for
@@ -37,6 +41,8 @@ the channel. Post a status_update confirming you are online. Wait for work."""
 name = "qa"
 display_name = "Verifier"
 harness = "claude-code"
+model = "sonnet"
+theme = "green"
 responsibilities = """
 Test strategy, test implementation, feature verification. Owns the docker
 compose stack. Extends test coverage beyond requirements based on own
