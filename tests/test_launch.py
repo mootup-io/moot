@@ -84,7 +84,8 @@ def test_cmd_exec_launch_full_flow(
     # shlex.quote on a hyphenated-identifier returns the identifier unquoted.
     assert "tmux -u new-session -d -s moot-spec" in script
     assert "--dangerously-load-development-channels server:convo-channel" in script
-    assert "--dangerously-skip-permissions" in script
+    assert "--dangerously-skip-permissions" not in script
+    assert "CONVO_WORKTREE=" in script
 
     # Per-role env must override via `tmux new-session -e`, NOT docker exec -e,
     # because sessions in a shared server inherit the server's env, not the

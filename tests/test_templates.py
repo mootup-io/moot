@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +11,7 @@ import pytest
 
 from moot.scaffold import (
     BUNDLED_SKILLS,
+    CLAUDE_TEMPLATE_DIR,
     DEVCONTAINER_TEMPLATE_DIR,
     SKILLS_TEMPLATE_DIR,
 )
@@ -542,3 +544,61 @@ class TestTeamTemplatesQA:
         assert "leader" in data["agents"]
         assert "implementation" in data["agents"]
         assert "qa" in data["agents"]
+
+
+# -- .claude/ template tests (Run AA) ----------------------------------------
+
+
+def test_claude_template_structure() -> None:
+    """`templates/claude/` bundles settings.json + four hook scripts; settings parses with defaultMode + four hook keys."""
+    settings_path = CLAUDE_TEMPLATE_DIR / "settings.json"
+    hooks_dir = CLAUDE_TEMPLATE_DIR / "hooks"
+    assert settings_path.exists(), f"missing {settings_path}"
+    assert hooks_dir.is_dir(), f"missing {hooks_dir}"
+
+    expected_hooks = {
+        "auto-orient.sh",
+        "git-guard.sh",
+        "grep-baseline-diff.sh",
+        "handoff-status-check.sh",
+    }
+    actual_hooks = {f.name for f in hooks_dir.iterdir()}
+    assert actual_hooks == expected_hooks, (
+        f"hook script set mismatch: {actual_hooks} != {expected_hooks}"
+    )
+
+    for hook in hooks_dir.iterdir():
+        mode = hook.stat().st_mode
+        assert mode & 0o111, f"{hook} is not executable (mode={oct(mode)})"
+
+    data = json.loads(settings_path.read_text())
+    assert data.get("permissions", {}).get("defaultMode") == "bypassPermissions", (
+        "permissions.defaultMode must be 'bypassPermissions'"
+    )
+    hooks_block = data.get("hooks", {})
+    for event in ("SessionStart", "PreToolUse", "PostToolUse", "Stop"):
+        assert event in hooks_block, f"hooks.{event} missing from settings.json"
+
+
+def test_claude_template_matches_convo() -> None:
+    """If CONVO_REPO_PATH is set, moot's `templates/claude/*` must be byte-identical to convo's `.claude/*`."""
+    convo_repo = os.environ.get("CONVO_REPO_PATH")
+    if not convo_repo:
+        pytest.skip("CONVO_REPO_PATH not set — skipping cross-repo parity check")
+
+    convo_claude = Path(convo_repo) / ".claude"
+    assert convo_claude.is_dir(), f"CONVO_REPO_PATH set but no .claude/ at {convo_claude}"
+
+    paths = [
+        "settings.json",
+        "hooks/auto-orient.sh",
+        "hooks/git-guard.sh",
+        "hooks/grep-baseline-diff.sh",
+        "hooks/handoff-status-check.sh",
+    ]
+    for rel in paths:
+        moot_bytes = (CLAUDE_TEMPLATE_DIR / rel).read_bytes()
+        convo_bytes = (convo_claude / rel).read_bytes()
+        assert moot_bytes == convo_bytes, (
+            f"byte-mismatch on {rel}: convo vs moot template differ"
+        )

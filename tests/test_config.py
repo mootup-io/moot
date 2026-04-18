@@ -22,7 +22,7 @@ display_name = "Spec"
 
 [harness]
 type = "claude-code"
-permissions = "dangerously-skip-permissions"
+permissions = "bypassPermissions"
 """
 
 
@@ -37,7 +37,7 @@ def test_config_parse_full(tmp_path: Path) -> None:
     assert config.api_url == "https://example.com:8443"
     assert config.space_id == "spc_abc123"
     assert config.harness_type == "claude-code"
-    assert config.permissions == "dangerously-skip-permissions"
+    assert config.permissions == "bypassPermissions"
     assert set(config.roles) == {"product", "spec"}
     assert config.agents["product"].display_name == "Product"
     assert config.agents["product"].profile == "devcontainer"

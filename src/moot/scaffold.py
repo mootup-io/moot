@@ -29,6 +29,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEVCONTAINER_TEMPLATE_DIR = TEMPLATES_DIR / "devcontainer"
 SKILLS_TEMPLATE_DIR = TEMPLATES_DIR / "skills"
 CLAUDE_MD_TEMPLATE = TEMPLATES_DIR / "CLAUDE.md"
+CLAUDE_TEMPLATE_DIR = TEMPLATES_DIR / "claude"
 
 GITIGNORE_ENTRIES = [".moot/", ".agents.json", ".env.local", ".worktrees/"]
 
@@ -355,8 +356,13 @@ def _install_bundles(
     api_url: str,
     overwrite: bool,
 ) -> dict[str, list[str]]:
-    """Install skills, CLAUDE.md, devcontainer. Returns conflict map."""
-    conflicts: dict[str, list[str]] = {"skills": [], "claude_md": [], "devcontainer": []}
+    """Install skills, CLAUDE.md, devcontainer, .claude/ config. Returns conflict map."""
+    conflicts: dict[str, list[str]] = {
+        "skills": [],
+        "claude_md": [],
+        "devcontainer": [],
+        "claude_dir": [],
+    }
 
     print("\nInstalling .claude/skills/:")
     for skill in BUNDLED_SKILLS:
@@ -395,6 +401,44 @@ def _install_bundles(
         print(
             f"\nInstalling CLAUDE.md           "
             f"(parameterized: project_name → {placeholders['{project_name}']})"
+        )
+
+    claude_settings = Path(".claude/settings.json")
+    src_claude_settings = CLAUDE_TEMPLATE_DIR / "settings.json"
+    src_claude_hooks = CLAUDE_TEMPLATE_DIR / "hooks"
+    if claude_settings.exists() and not overwrite:
+        staged = Path(f"{MOOT_DIR}/suggested-claude")
+        (staged / "hooks").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_claude_settings, staged / "settings.json")
+        for hook in src_claude_hooks.iterdir():
+            dest = staged / "hooks" / hook.name
+            shutil.copy2(hook, dest)
+            dest.chmod(
+                dest.stat().st_mode
+                | stat.S_IEXEC
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+        conflicts["claude_dir"].append(".claude/settings.json")
+        print(
+            ".claude/settings.json already exists — staged at .moot/suggested-claude/"
+        )
+    else:
+        claude_settings.parent.mkdir(exist_ok=True)
+        (claude_settings.parent / "hooks").mkdir(exist_ok=True)
+        shutil.copy2(src_claude_settings, claude_settings)
+        for hook in src_claude_hooks.iterdir():
+            dest = claude_settings.parent / "hooks" / hook.name
+            shutil.copy2(hook, dest)
+            dest.chmod(
+                dest.stat().st_mode
+                | stat.S_IEXEC
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
+        hook_count = len(list((claude_settings.parent / "hooks").iterdir()))
+        print(
+            f"Installing .claude/settings.json + {hook_count} hook scripts"
         )
 
     devcontainer_dir = Path(".devcontainer")

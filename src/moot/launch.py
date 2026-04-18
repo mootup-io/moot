@@ -195,7 +195,7 @@ def _launch_role(
             # interactive TUI mode. `-p` runs in print mode and exits as
             # soon as the response is emitted, which kills the tmux session.
             claude_cmd = (
-                "claude --dangerously-skip-permissions "
+                "claude "
                 "--dangerously-load-development-channels server:convo-channel "
                 f"-- {shlex.quote(prompt)}"
             )
@@ -217,6 +217,7 @@ def _launch_role(
     pane_env: dict[str, str] = {
         "CONVO_ROLE": role,
         "CONVO_API_URL": config.api_url,
+        "CONVO_WORKTREE": wt_path,
     }
     tmux_e_flags = " ".join(
         f"-e {shlex.quote(f'{k}={v}')}" for k, v in pane_env.items()
