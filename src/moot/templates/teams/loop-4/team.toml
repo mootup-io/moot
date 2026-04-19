@@ -1,3 +1,10 @@
+toml_schema_version = "1"
+
+[archetype]
+id = "mootup/loop-4"
+version = "1.0"
+diverged_at = ""
+
 [team]
 name = "loop-4"
 description = "Four-agent software development pipeline proven over 30+ features"

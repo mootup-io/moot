@@ -1,3 +1,10 @@
+toml_schema_version = "1"
+
+[archetype]
+id = "mootup/loop-4-observer"
+version = "1.0"
+diverged_at = ""
+
 [team]
 name = "loop-4-observer"
 description = "Standard four-agent pipeline with async Librarian observer"

@@ -1,3 +1,10 @@
+toml_schema_version = "1"
+
+[archetype]
+id = "mootup/loop-4-split-leader"
+version = "1.0"
+diverged_at = ""
+
 [team]
 name = "loop-4-split-leader"
 description = "Pipeline with separated Product (human-facing) and Lead (team-facing) coordination"

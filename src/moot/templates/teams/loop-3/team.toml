@@ -1,3 +1,10 @@
+toml_schema_version = "1"
+
+[archetype]
+id = "mootup/loop-3"
+version = "1.0"
+diverged_at = ""
+
 [team]
 name = "loop-3"
 description = "Minimal three-agent pipeline for small projects"
