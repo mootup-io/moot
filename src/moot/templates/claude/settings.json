@@ -2,14 +2,18 @@
   "permissions": {
     "defaultMode": "bypassPermissions",
     "allow": [
-      "Edit(.claude/skills/**)",
-      "Write(.claude/skills/**)",
+      "Edit(.claude/**)",
+      "Write(.claude/**)",
+      "Edit(.worktrees/**/.claude/**)",
+      "Write(.worktrees/**/.claude/**)",
       "Edit(CLAUDE.md)",
       "Write(CLAUDE.md)",
-      "Edit(.claude/CLAUDE.md)",
-      "Write(.claude/CLAUDE.md)",
+      "Edit(.worktrees/**/CLAUDE.md)",
+      "Write(.worktrees/**/CLAUDE.md)",
       "Edit(docs/**/CLAUDE.md)",
-      "Write(docs/**/CLAUDE.md)"
+      "Write(docs/**/CLAUDE.md)",
+      "Edit(.worktrees/**/docs/**/CLAUDE.md)",
+      "Write(.worktrees/**/docs/**/CLAUDE.md)"
     ]
   },
   "hooks": {
