@@ -1,6 +1,16 @@
 {
   "permissions": {
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Edit(.claude/skills/**)",
+      "Write(.claude/skills/**)",
+      "Edit(CLAUDE.md)",
+      "Write(CLAUDE.md)",
+      "Edit(.claude/CLAUDE.md)",
+      "Write(.claude/CLAUDE.md)",
+      "Edit(docs/**/CLAUDE.md)",
+      "Write(docs/**/CLAUDE.md)"
+    ]
   },
   "hooks": {
     "SessionStart": [
