@@ -1299,12 +1299,17 @@ class MCPSpaceAdapter:
         await self.mcp.run_stdio_async()
 
     async def start_http(self, host: str = "0.0.0.0", port: int = 8100) -> None:
-        """Run MCP server in HTTP mode (for remote/shared access)."""
-        self.logger.info("Starting MCP server in HTTP mode on %s:%d", host, port)
-        await self.auto_join()
-        self.mcp.settings.host = host
-        self.mcp.settings.port = port
-        await self.mcp.run_streamable_http_async()
+        """Run MCP server in HTTP mode.
+
+        DEPRECATED + DISABLED (SEC-3-C, legacy mirror): unauthenticated HTTP
+        transport surface eliminated. Signature retained for caller
+        compatibility (mcp_runner.py --transport http surfaces a clear
+        error); body raises immediately.
+        """
+        raise NotImplementedError(
+            "MCP HTTP transport is disabled (no token_verifier configured). "
+            "Use stdio transport. Scheduled for removal."
+        )
 
     async def stop(self) -> None:
         await self._http.aclose()
