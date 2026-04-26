@@ -18,16 +18,33 @@ done
 # "unknown-agent", and the backend rejects any post whose agent_id in the
 # body doesn't match the authenticated actor (HTTP 400, which the adapter
 # surfaces as an empty event_id).
+#
+# SEC-2-C: env-driven Python via single-quoted heredoc — no shell-eval RCE.
+# CONVO_ROLE / paths reach Python via os.environ, never via shell interpolation.
 if [ -f "$PROJECT_ROOT/$ACTORS_FILE" ]; then
-    eval $(python3 -c "
-import json, shlex
-with open('$PROJECT_ROOT/$ACTORS_FILE') as f:
-    data = json.load(f)
-entry = data.get('actors', {}).get('$ROLE', {})
-print('KEY=' + shlex.quote(entry.get('api_key', '')))
-print('AID=' + shlex.quote(entry.get('actor_id', '')))
-print('ANAME=' + shlex.quote(entry.get('display_name', '$ROLE')))
-" 2>/dev/null)
+    OUT="$(
+        export _PR="$PROJECT_ROOT" _AF="$ACTORS_FILE" _ROLE="$ROLE"
+        python3 <<'PYEOF'
+import json, os, sys
+pr = os.environ['_PR']
+af = os.environ['_AF']
+role = os.environ['_ROLE']
+try:
+    with open(os.path.join(pr, af)) as f:
+        data = json.load(f)
+    entry = data.get('actors', {}).get(role, {})
+    print(entry.get('api_key', ''))
+    print(entry.get('actor_id', ''))
+    print(entry.get('display_name', role))
+except Exception:
+    print('', file=sys.stderr)
+    print('', file=sys.stderr)
+    print('', file=sys.stderr)
+PYEOF
+    )"
+    KEY="$(printf '%s\n' "$OUT" | sed -n '1p')"
+    AID="$(printf '%s\n' "$OUT" | sed -n '2p')"
+    ANAME="$(printf '%s\n' "$OUT" | sed -n '3p')"
     if [ -n "$KEY" ]; then
         export CONVO_API_KEY="$KEY"
     else
@@ -39,12 +56,15 @@ fi
 
 # Read API URL from moot.toml
 if [ -z "$CONVO_API_URL" ] && [ -f "$PROJECT_ROOT/moot.toml" ]; then
-    URL=$(python3 -c "
-import tomllib
-with open('$PROJECT_ROOT/moot.toml', 'rb') as f:
+    URL="$(
+        export _PR="$PROJECT_ROOT"
+        python3 <<'PYEOF'
+import os, tomllib
+with open(os.path.join(os.environ['_PR'], 'moot.toml'), 'rb') as f:
     data = tomllib.load(f)
 print(data.get('convo', {}).get('api_url', ''))
-" 2>/dev/null)
+PYEOF
+    )"
     if [ -n "$URL" ]; then
         export CONVO_API_URL="$URL"
     fi
@@ -52,12 +72,15 @@ fi
 
 # Read space ID from moot.toml
 if [ -z "$CONVO_SPACE_ID" ] && [ -f "$PROJECT_ROOT/moot.toml" ]; then
-    SID=$(python3 -c "
-import tomllib
-with open('$PROJECT_ROOT/moot.toml', 'rb') as f:
+    SID="$(
+        export _PR="$PROJECT_ROOT"
+        python3 <<'PYEOF'
+import os, tomllib
+with open(os.path.join(os.environ['_PR'], 'moot.toml'), 'rb') as f:
     data = tomllib.load(f)
 print(data.get('convo', {}).get('space_id', ''))
-" 2>/dev/null)
+PYEOF
+    )"
     if [ -n "$SID" ]; then
         export CONVO_SPACE_ID="$SID"
     fi
