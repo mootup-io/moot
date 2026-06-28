@@ -13,6 +13,18 @@ while [ "$PROJECT_ROOT" != "/" ]; do
     PROJECT_ROOT="$(dirname "$PROJECT_ROOT")"
 done
 
+# Worktree fallback: moot.toml is committed (so every git worktree has it),
+# but .moot/ is gitignored (only the main worktree has it). When an agent runs
+# from a per-role worktree (<repo>/.worktrees/<role>/), .moot/actors.json is
+# absent here, so resolve the main worktree (first `git worktree list` entry)
+# and read its .moot/ instead.
+if [ ! -f "$PROJECT_ROOT/$ACTORS_FILE" ]; then
+    MAIN_ROOT="$(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')"
+    if [ -n "$MAIN_ROOT" ] && [ -f "$MAIN_ROOT/$ACTORS_FILE" ]; then
+        PROJECT_ROOT="$MAIN_ROOT"
+    fi
+fi
+
 # Read per-role actor identity from .moot/actors.json. We MUST export
 # CONVO_AGENT_ID and CONVO_AGENT_NAME — the mcp_runner defaults them to
 # "unknown-agent", and the backend rejects any post whose agent_id in the
