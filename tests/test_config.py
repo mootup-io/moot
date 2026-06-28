@@ -166,7 +166,7 @@ class TestAgentProfiles:
             "\n"
             "[agents.spec]\n"
             'display_name = "Spec"\n'
-            'model = "sonet"\n'
+            'model = "deepseek v4"\n'  # whitespace — not a single model token
         )
         from moot.config import MootConfig
 
@@ -175,7 +175,34 @@ class TestAgentProfiles:
         assert excinfo.value.code == 1
         captured = capsys.readouterr()
         assert "spec" in captured.out
-        assert "not a recognized Claude model alias" in captured.out
+        assert "not a valid model identifier" in captured.out
+
+    def test_provider_models_load(self, tmp_path: Path) -> None:
+        """Non-Claude / provider-qualified model strings pass validation and
+        are forwarded verbatim (routed downstream by the local LLM proxy)."""
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            "[convo]\n"
+            'api_url = "https://x"\n'
+            "\n"
+            "[agents.spec-leader]\n"
+            'model = "deepseek-v4-pro"\n'
+            "\n"
+            "[agents.implementer]\n"
+            'model = "accounts/fireworks/models/glm-5p2"\n'
+            "\n"
+            "[agents.enclave]\n"
+            'model = "claude-opus-4-8[1m]"\n'
+        )
+        from moot.config import MootConfig
+
+        config = MootConfig(toml_path)
+        assert config.agents["spec-leader"].model == "deepseek-v4-pro"
+        assert (
+            config.agents["implementer"].model
+            == "accounts/fireworks/models/glm-5p2"
+        )
+        assert config.agents["enclave"].model == "claude-opus-4-8[1m]"
 
     def test_migration_v1_toml_still_loads(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "moot.toml"
@@ -189,19 +216,22 @@ class TestAgentProfiles:
             assert role.theme is None
 
 
-class TestModelAllowlistRegex:
-    """Regression guard for _MODEL_ALLOWLIST_RE: known-good aliases must
-    match; known-bad strings (typos, whitespace, empty) must not.
+class TestModelTokenRegex:
+    """Regression guard for _MODEL_TOKEN_RE: well-formed model identifiers
+    (Claude aliases, Claude full IDs incl. a "[...]" context suffix, and
+    provider-qualified slugs) must match; only empty / whitespace / strings
+    with characters that don't belong in a model identifier must not.
 
-    Protects against accidental regex tightening (e.g., dropping the
-    claude-* passthrough) or loosening (e.g., letting whitespace slip
-    through to the CLI flag).
+    Protects against accidental tightening (e.g., re-dropping provider slugs or
+    the "[1m]" suffix) or loosening (e.g., letting whitespace slip through to
+    the CLI flag).
     """
 
-    def test_known_good_aliases_match(self) -> None:
-        from moot.config import _MODEL_ALLOWLIST_RE
+    def test_well_formed_models_match(self) -> None:
+        from moot.config import _MODEL_TOKEN_RE
 
         good = [
+            # Claude aliases
             "opus",
             "sonnet",
             "haiku",
@@ -210,29 +240,34 @@ class TestModelAllowlistRegex:
             "opusplan",
             "sonnet[1m]",
             "opus[1m]",
+            # Claude full IDs, including a context-window suffix
             "claude-opus-4-7",
             "claude-sonnet-4-6",
-            "claude-haiku-4-5",
-            "claude-opus-4-6",
+            "claude-opus-4-8[1m]",
+            # provider-qualified slugs (routed by the local LLM proxy by prefix)
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "accounts/fireworks/models/glm-5p2",
+            "accounts/fireworks/routers/glm-latest[1m]",
         ]
-        for alias in good:
-            assert _MODEL_ALLOWLIST_RE.match(alias), f"expected match for {alias!r}"
+        for model in good:
+            assert _MODEL_TOKEN_RE.match(model), f"expected match for {model!r}"
 
-    def test_known_bad_strings_rejected(self) -> None:
-        from moot.config import _MODEL_ALLOWLIST_RE
+    def test_malformed_strings_rejected(self) -> None:
+        from moot.config import _MODEL_TOKEN_RE
 
         bad = [
-            "opsu",  # typo
-            "sonet",  # typo
             "",  # empty
-            "claude-",  # incomplete full ID
             "opus ",  # trailing space
             " opus",  # leading space
+            "deepseek v4-pro",  # internal whitespace
+            "rm -rf /;",  # shell metacharacters
+            "model\tname",  # tab
         ]
-        for alias in bad:
-            assert not _MODEL_ALLOWLIST_RE.match(
-                alias
-            ), f"expected NO match for {alias!r}"
+        for model in bad:
+            assert not _MODEL_TOKEN_RE.match(
+                model
+            ), f"expected NO match for {model!r}"
 
 
 def test_get_actor_key_returns_role_key(

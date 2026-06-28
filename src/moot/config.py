@@ -13,9 +13,27 @@ MOOT_DIR = ".moot"
 ACTORS_JSON = f"{MOOT_DIR}/actors.json"
 
 _HARNESS_ALLOWLIST = {"claude-code", "cursor", "aider"}
-_MODEL_ALLOWLIST_RE = re.compile(
-    r"^(opus|sonnet|haiku|best|default|opusplan|sonnet\[1m\]|opus\[1m\]|claude-[a-z0-9-]+)$"
+# Claude alias forms Claude Code resolves directly. Listed for the error message;
+# they are a subset of what _MODEL_TOKEN_RE accepts.
+_CLAUDE_ALIASES = (
+    "opus",
+    "sonnet",
+    "haiku",
+    "best",
+    "default",
+    "opusplan",
+    "sonnet[1m]",
+    "opus[1m]",
 )
+# The model string is forwarded verbatim to `claude --model` and routed by the
+# local LLM proxy by prefix (claude-* -> Anthropic, deepseek-* -> DeepSeek,
+# accounts/fireworks/* -> Fireworks). So we accept any single shell-safe model
+# token: Claude aliases, Claude full IDs with an optional "[...]" context suffix
+# (e.g. claude-opus-4-8[1m]), and provider-qualified slugs (deepseek-v4-pro,
+# accounts/fireworks/models/glm-5p2). Only empty / whitespace / strings carrying
+# characters that don't belong in a model identifier are rejected — unknown but
+# well-formed names pass through to the harness (and the proxy) untouched.
+_MODEL_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:+/\[\]-]+$")
 _EFFORT_ALLOWLIST = {"low", "medium", "high", "xhigh", "max"}
 
 
@@ -59,12 +77,14 @@ class AgentConfig:
                 f"agents.{self.role}.harness = {self.harness!r} is not one of "
                 f"{sorted(_HARNESS_ALLOWLIST)}"
             )
-        if self.model is not None and not _MODEL_ALLOWLIST_RE.match(self.model):
+        if self.model is not None and not _MODEL_TOKEN_RE.match(self.model):
             _config_error(
-                f"agents.{self.role}.model = {self.model!r} is not a recognized "
-                f"Claude model alias or full ID. Valid aliases: opus, sonnet, "
-                f"haiku, best, default, opusplan, sonnet[1m], opus[1m]. Full "
-                f"IDs must match claude-<identifier>."
+                f"agents.{self.role}.model = {self.model!r} is not a valid model "
+                f"identifier. Use a Claude alias "
+                f"({', '.join(_CLAUDE_ALIASES)}), a Claude full ID (claude-..., "
+                f"optionally with a context suffix like claude-opus-4-8[1m]), or "
+                f"a provider model routed by the proxy (e.g. deepseek-v4-pro, "
+                f"accounts/fireworks/models/glm-5p2)."
             )
         if self.effort is not None and self.effort not in _EFFORT_ALLOWLIST:
             _config_error(

@@ -475,7 +475,7 @@ class TestTeamTemplatesQA:
         """Every directory in templates/teams/ has a valid, parseable team.toml."""
         assert TEAMS_DIR.is_dir()
         template_dirs = sorted(d for d in TEAMS_DIR.iterdir() if d.is_dir())
-        assert len(template_dirs) == 5, f"Expected 5 templates, found {len(template_dirs)}"
+        assert len(template_dirs) == 6, f"Expected 6 templates, found {len(template_dirs)}"
         for d in template_dirs:
             toml_path = d / "team.toml"
             assert toml_path.exists(), f"{d.name} missing team.toml"
@@ -665,13 +665,13 @@ class TestPerTemplateGenerationFuzz:
     MootConfig to confirm the generated output is valid end-to-end.
 
     Catches schema drift where team.toml or the generator emits a value
-    that AgentConfig's validator rejects (e.g., a model alias that no
-    longer matches _MODEL_ALLOWLIST_RE, or a theme that slips a newline).
+    that AgentConfig's validator rejects (e.g., a model string that no
+    longer matches _MODEL_TOKEN_RE, or a theme that slips a newline).
     """
 
     @pytest.mark.parametrize(
         "template_name",
-        ["loop-3", "loop-4", "loop-4-observer", "loop-4-parallel", "loop-4-split-leader"],
+        ["loop-3", "loop-4", "loop-4-observer", "loop-4-parallel", "loop-4-split-leader", "loop-6"],
     )
     def test_generate_and_reparse_no_validation_error(
         self, template_name: str, tmp_path: Path
