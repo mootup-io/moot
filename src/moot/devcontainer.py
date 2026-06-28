@@ -1,11 +1,12 @@
-"""devcontainer CLI + docker exec wrapper.
+"""Container discovery + docker exec wrapper (runs inside the devcontainer).
 
-Single source of truth for how moot-cli talks to the bundled devcontainer
-that `moot init` installs. The host runs `devcontainer up` once to boot (or
-rediscover) the container, then uses raw `docker exec` for every subsequent
-call. docker exec is ~10x faster than going through the devcontainer CLI for
-each command, supports -e for env, -d for detached, -it for interactive, and
---user to pin the container user.
+The python launcher runs only *inside* the bundled devcontainer that
+`moot init` installs: the host `@mootup/moot-cli` boots the devcontainer and
+then execs `moot <cmd>` within it. This module never manages the devcontainer
+itself — it rediscovers the running container and shells back into it via raw
+`docker exec`, which is ~10x faster than the devcontainer CLI per command and
+supports -e for env, -d for detached, -it for interactive, and --user to pin
+the container user.
 
 All exec calls run as --user node (matching devcontainer.json's remoteUser).
 API keys and secrets MUST be passed via the `env` parameter so they never
@@ -13,60 +14,30 @@ appear on the bash command line (ps, scrollback, tmux env dump).
 """
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 
 
 class DevcontainerError(RuntimeError):
-    """Any failure talking to the devcontainer CLI or to docker exec."""
-
-
-def ensure_cli() -> None:
-    """Assert `devcontainer` is on PATH. Raise with install hint if not."""
-    if shutil.which("devcontainer") is None:
-        raise DevcontainerError(
-            "devcontainer CLI not found on PATH.\n"
-            "Install with: npm i -g @devcontainers/cli\n"
-            "Docs: https://containers.dev/supporting#devcontainer-cli"
-        )
+    """Any failure resolving the devcontainer or talking to docker exec."""
 
 
 def up(workspace: Path) -> str:
-    """Boot (or rediscover) the devcontainer for `workspace`; return its id.
+    """Rediscover the running devcontainer for `workspace`; return its id.
 
-    Runs `devcontainer up --workspace-folder <workspace>` in default text
-    log format and streams stdout/stderr to the user's terminal. After the
-    subprocess exits, looks up the running container id via
-    `container_id_or_none()` (which queries the `devcontainer.local_folder`
-    label). On non-zero exit, raises `DevcontainerError` with the exit
-    code — the actual error output is already on the user's terminal, so
-    we don't re-embed it in the exception message.
-
-    Prints a pre-build hint only when no container is currently running
-    for this workspace. The CLI's idempotent re-up path is ~0.35s, so
-    we don't short-circuit; we just suppress the "can take 1-3 minutes"
-    line that would be misleading on a re-up.
+    The python launcher runs only *inside* the devcontainer — the host
+    `@mootup/moot-cli` boots the container, then execs `moot up` within it — so
+    this never performs devcontainer management (booting from within would need
+    a devcontainer CLI that is absent by design and would nest via
+    docker-in-docker). It simply finds the running container, the same way every
+    other in-container subcommand (status / attach / down / compact) does, so
+    the caller can launch agent sessions into it.
     """
-    ensure_cli()
-    already_running = container_id_or_none(workspace) is not None
-    if not already_running:
-        print(
-            f"Building devcontainer in {workspace} "
-            "(first launch can take 1-3 minutes)..."
-        )
-    proc = subprocess.run(
-        ["devcontainer", "up", "--workspace-folder", str(workspace)],
-    )
-    if proc.returncode != 0:
-        raise DevcontainerError(
-            f"devcontainer up failed (exit code {proc.returncode})"
-        )
     container_id = container_id_or_none(workspace)
     if not container_id:
         raise DevcontainerError(
-            f"devcontainer up exited 0 but no running container was found "
-            f"for {workspace}"
+            f"no running container found for {workspace}. "
+            "Boot the devcontainer from the host first with `moot up`."
         )
     return container_id
 
