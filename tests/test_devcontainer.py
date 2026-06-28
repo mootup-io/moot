@@ -1,4 +1,4 @@
-"""Unit tests for moot.devcontainer — mock subprocess at the boundary."""
+"""Unit tests for moot.devcontainer — the in-devcontainer local exec layer."""
 from __future__ import annotations
 
 import subprocess
@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from moot.devcontainer import (
-    DevcontainerError,
     container_id_or_none,
     exec_capture,
     exec_detached,
@@ -26,165 +25,144 @@ def _fake_run(
     )
 
 
-# --- up (in-container rediscovery only; never manages the devcontainer) ---
+# --- container discovery (presume in-devcontainer; no docker reflection) ---
 
-def test_up_returns_running_container_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    """up() resolves the running container via container_id_or_none and never
-    shells out (the python launcher runs inside the container; the host JS CLI
-    is what boots the devcontainer)."""
-    import moot.devcontainer as dc
-    monkeypatch.setattr(dc, "container_id_or_none", lambda _ws: "cid_running")
-
-    def _boom(*_a: object, **_kw: object) -> object:
-        raise AssertionError("up() must not invoke subprocess (no devcontainer up)")
-
-    monkeypatch.setattr(dc.subprocess, "run", _boom)
-
-    assert up(Path("/workspaces/repo")) == "cid_running"
-
-
-def test_up_no_container_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No running container → DevcontainerError pointing at the host `moot up`."""
-    import moot.devcontainer as dc
-    monkeypatch.setattr(dc, "container_id_or_none", lambda _ws: None)
-    with pytest.raises(DevcontainerError) as exc:
-        up(Path("/workspaces/repo"))
-    assert "no running container" in str(exc.value).lower()
-
-
-# --- container_id_or_none ---
-
-def test_container_id_or_none_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    import moot.devcontainer as dc
-    captured: dict[str, list[str]] = {}
-
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["cmd"] = cmd
-        return _fake_run(stdout="cid9999\n")
-
-    monkeypatch.setattr(dc.subprocess, "run", fake_run)
-    result = container_id_or_none(Path("/tmp/workspace"))
-    assert result == "cid9999"
-    assert "docker" in captured["cmd"]
-    assert any(
-        a.startswith("label=devcontainer.local_folder=") for a in captured["cmd"]
-    )
-
-
-def test_container_id_or_none_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    import moot.devcontainer as dc
-    monkeypatch.setattr(
-        dc.subprocess, "run", lambda *a, **kw: _fake_run(stdout="")
-    )
-    assert container_id_or_none(Path("/tmp/workspace")) is None
-
-
-# --- exec_capture ---
-
-def test_exec_capture_user_node_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    import moot.devcontainer as dc
-    captured: dict[str, list[str]] = {}
-
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["cmd"] = cmd
-        return _fake_run(stdout="hello", stderr="", returncode=0)
-
-    monkeypatch.setattr(dc.subprocess, "run", fake_run)
-
-    rc, stdout, stderr = exec_capture(
-        "cid", ["echo", "hi"], env={"FOO": "bar", "BAZ": "qux"}
-    )
-    assert rc == 0
-    assert stdout == "hello"
-    cmd = captured["cmd"]
-    assert cmd[:5] == ["docker", "exec", "--user", "node", "-e"]
-    assert "FOO=bar" in cmd
-    assert "BAZ=qux" in cmd
-    assert cmd[-3] == "cid"
-    assert cmd[-2:] == ["echo", "hi"]
-
-
-def test_exec_capture_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    import moot.devcontainer as dc
-    captured: dict[str, list[str]] = {}
-
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["cmd"] = cmd
-        return _fake_run()
-
-    monkeypatch.setattr(dc.subprocess, "run", fake_run)
-    exec_capture("cid", ["tmux", "has-session", "-t", "moot-spec"])
-    # When env is None, no -e pairs should be emitted.
-    assert captured["cmd"] == [
-        "docker", "exec", "--user", "node",
-        "cid", "tmux", "has-session", "-t", "moot-spec",
-    ]
-
-
-# --- exec_detached ---
-
-def test_exec_detached_uses_d_flag(monkeypatch: pytest.MonkeyPatch) -> None:
-    import moot.devcontainer as dc
-    captured: dict[str, list[str]] = {}
-
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["cmd"] = cmd
-        captured["check"] = kwargs.get("check", False)  # type: ignore[assignment]
-        return _fake_run()
-
-    monkeypatch.setattr(dc.subprocess, "run", fake_run)
-    exec_detached("cid", ["bash", "-c", "sleep 1"], env={"X": "y"})
-    cmd = captured["cmd"]
-    assert cmd[:5] == ["docker", "exec", "-d", "--user", "node"]
-    assert "X=y" in cmd
-    assert captured["check"] is True
-
-
-# --- exec_interactive ---
-
-def test_exec_interactive_pins_term_and_lang_to_container_safe_values(
+def test_container_id_or_none_returns_hostname(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Always pin TERM=xterm-256color + LANG=C.UTF-8 because host TERM
-    values (e.g. xterm-24bits, xterm-kitty, alacritty) often have no
-    terminfo entry inside the container — tmux then refuses to start
-    with 'missing or unsuitable terminal'."""
     import moot.devcontainer as dc
-    captured: dict[str, list[str]] = {}
 
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["cmd"] = cmd
+    def _boom(*_a: object, **_kw: object) -> object:
+        raise AssertionError("must not shell out to docker to find the container")
+
+    monkeypatch.setattr(dc.subprocess, "run", _boom)
+    monkeypatch.setattr(dc.socket, "gethostname", lambda: "23c9e3b97f7c")
+    assert container_id_or_none(Path("/workspaces/repo")) == "23c9e3b97f7c"
+
+
+def test_up_reports_current_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    import moot.devcontainer as dc
+
+    def _boom(*_a: object, **_kw: object) -> object:
+        raise AssertionError("up() must not shell out (no devcontainer management)")
+
+    monkeypatch.setattr(dc.subprocess, "run", _boom)
+    monkeypatch.setattr(dc.socket, "gethostname", lambda: "23c9e3b97f7c")
+    assert up(Path("/workspaces/repo")) == "23c9e3b97f7c"
+
+
+def test_up_falls_back_when_hostname_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    import moot.devcontainer as dc
+    monkeypatch.setattr(dc.socket, "gethostname", lambda: "")
+    assert up(Path("/workspaces/repo")) == "devcontainer"
+
+
+# --- exec_capture (local) ---
+
+def test_exec_capture_runs_locally_with_layered_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import moot.devcontainer as dc
+    captured: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        captured["env"] = kwargs.get("env")
+        return _fake_run(stdout="hello", returncode=0)
+
+    monkeypatch.setattr(dc.subprocess, "run", fake_run)
+    monkeypatch.setenv("PATH", "/usr/bin")  # part of the os.environ baseline
+
+    rc, stdout, _stderr = exec_capture(
+        "ignored-cid", ["echo", "hi"], env={"FOO": "bar"}
+    )
+    assert (rc, stdout) == (0, "hello")
+    # Command runs directly — no `docker exec` wrapper.
+    assert captured["args"] == ["echo", "hi"]
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["FOO"] == "bar"        # layered override present
+    assert env["PATH"] == "/usr/bin"  # base environment inherited
+
+
+def test_exec_capture_no_env_inherits_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import moot.devcontainer as dc
+    captured: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        captured["env"] = kwargs.get("env")
+        return _fake_run()
+
+    monkeypatch.setattr(dc.subprocess, "run", fake_run)
+    exec_capture("ignored-cid", ["tmux", "has-session", "-t", "moot-spec"])
+    assert captured["args"] == ["tmux", "has-session", "-t", "moot-spec"]
+    assert isinstance(captured["env"], dict)  # always the process environment
+
+
+# --- exec_detached (local, fire-and-forget) ---
+
+def test_exec_detached_spawns_without_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import moot.devcontainer as dc
+    captured: dict[str, object] = {}
+
+    def fake_popen(args: list[str], **kwargs: object) -> object:
+        captured["args"] = args
+        captured["env"] = kwargs.get("env")
+        return object()  # stand-in Popen handle; never awaited
+
+    monkeypatch.setattr(dc.subprocess, "Popen", fake_popen)
+    exec_detached(
+        "ignored-cid", ["bash", "-lc", "tmux new-session -d"], env={"X": "y"}
+    )
+    assert captured["args"] == ["bash", "-lc", "tmux new-session -d"]
+    env = captured["env"]
+    assert isinstance(env, dict) and env["X"] == "y"
+
+
+# --- exec_interactive (local, stdio inherited) ---
+
+def test_exec_interactive_pins_term_and_lang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin TERM=xterm-256color + LANG=C.UTF-8 in the child environment because
+    exotic host TERM values often have no terminfo entry in the container."""
+    import moot.devcontainer as dc
+    captured: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["args"] = args
+        captured["env"] = kwargs.get("env")
         return _fake_run()
 
     monkeypatch.setattr(dc.subprocess, "run", fake_run)
     monkeypatch.setenv("TERM", "xterm-24bits")  # exotic host TERM
     monkeypatch.delenv("COLORTERM", raising=False)
 
-    exec_interactive("cid", ["tmux", "attach-session", "-t", "moot-spec"])
-    cmd = captured["cmd"]
-    assert cmd[:5] == ["docker", "exec", "-it", "--user", "node"]
-    assert "TERM=xterm-256color" in cmd
-    assert "TERM=xterm-24bits" not in cmd
-    assert "LANG=C.UTF-8" in cmd
-    # No COLORTERM arg when the host didn't set one.
-    assert not any(e.startswith("COLORTERM=") for e in cmd)
-    assert cmd[-4:] == ["tmux", "attach-session", "-t", "moot-spec"]
+    exec_interactive("ignored-cid", ["tmux", "attach-session", "-t", "moot-spec"])
+    assert captured["args"] == ["tmux", "attach-session", "-t", "moot-spec"]
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["TERM"] == "xterm-256color"  # overrides the exotic host TERM
+    assert env["LANG"] == "C.UTF-8"
 
 
-def test_exec_interactive_passes_colorterm_when_host_exports_it(
+def test_exec_interactive_passes_colorterm_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """COLORTERM is safe to pass through — it's just a capability flag,
-    not a terminfo lookup key."""
     import moot.devcontainer as dc
-    captured: dict[str, list[str]] = {}
+    captured: dict[str, object] = {}
 
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["cmd"] = cmd
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["env"] = kwargs.get("env")
         return _fake_run()
 
     monkeypatch.setattr(dc.subprocess, "run", fake_run)
     monkeypatch.setenv("COLORTERM", "truecolor")
-
-    exec_interactive("cid", ["tmux", "attach-session", "-t", "moot-spec"])
-    assert "COLORTERM=truecolor" in captured["cmd"]
+    exec_interactive("ignored-cid", ["tmux", "attach-session", "-t", "moot-spec"])
+    env = captured["env"]
+    assert isinstance(env, dict) and env["COLORTERM"] == "truecolor"
