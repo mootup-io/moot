@@ -204,6 +204,50 @@ class TestAgentProfiles:
         )
         assert config.agents["enclave"].model == "claude-opus-4-8[1m]"
 
+    def test_per_role_env_parsed(self, tmp_path: Path) -> None:
+        """[agents.<role>].env loads as a string table (secret refs are kept
+        verbatim; resolution happens at launch, not at config load)."""
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            "[convo]\n"
+            'api_url = "https://x"\n'
+            "\n"
+            "[agents.kernel-implementer]\n"
+            'model = "accounts/fireworks/models/glm-5p2"\n'
+            'env = { ANTHROPIC_BASE_URL = "http://127.0.0.1:8090", '
+            'ANTHROPIC_API_KEY = "${secret:llm-proxy-secret}" }\n'
+            "\n"
+            "[agents.enclave]\n"
+            'model = "claude-opus-4-8[1m]"\n'
+        )
+        from moot.config import MootConfig
+
+        config = MootConfig(toml_path)
+        ki = config.agents["kernel-implementer"]
+        assert ki.env == {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:8090",
+            "ANTHROPIC_API_KEY": "${secret:llm-proxy-secret}",
+        }
+        # Roles with no env default to an empty dict (clean OAuth/subscription).
+        assert config.agents["enclave"].env == {}
+
+    def test_env_non_string_value_rejected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            "[convo]\n"
+            'api_url = "https://x"\n'
+            "\n"
+            "[agents.spec]\n"
+            "env = { ANTHROPIC_API_KEY = 123 }\n"  # number, not a string
+        )
+        from moot.config import MootConfig
+
+        with pytest.raises(SystemExit):
+            MootConfig(toml_path)
+        assert "env.ANTHROPIC_API_KEY must be a string" in capsys.readouterr().out
+
     def test_migration_v1_toml_still_loads(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "moot.toml"
         toml_path.write_text(SAMPLE_TOML)  # pre-run schema

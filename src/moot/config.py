@@ -68,6 +68,12 @@ class AgentConfig:
         self.model: str | None = data.get("model", default_model)
         self.effort: str | None = data.get("effort", default_effort)
         self.theme: str | None = data.get("theme")
+        # Per-role environment variables merged into the agent's launch env
+        # (e.g. ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY to bind a non-Anthropic
+        # provider). Values may carry ${secret:NAME} references, resolved from
+        # the secrets dir at launch time (moot/launch.py) so secrets stay out of
+        # committed moot.toml.
+        self.env: dict[str, str] = data.get("env", {}) or {}
         self._raw: dict[str, Any] = data
         self._validate()
 
@@ -91,6 +97,17 @@ class AgentConfig:
                 f"agents.{self.role}.effort = {self.effort!r} is not one of "
                 f"{sorted(_EFFORT_ALLOWLIST)}"
             )
+        if not isinstance(self.env, dict):
+            _config_error(
+                f"agents.{self.role}.env must be a table of NAME = \"value\" "
+                f"pairs (got {type(self.env).__name__})"
+            )
+        for key, value in self.env.items():
+            if not isinstance(value, str):
+                _config_error(
+                    f"agents.{self.role}.env.{key} must be a string "
+                    f"(got {type(value).__name__})"
+                )
 
 
 class MootConfig:

@@ -1,6 +1,8 @@
 """Launch Claude agents in tmux sessions inside the bundled devcontainer."""
 from __future__ import annotations
 
+import os
+import re
 import shlex
 import sys
 import time
@@ -23,6 +25,33 @@ AUTH_POLL_INTERVAL_S = 5.0
 # login flow; a second of slack ensures the last write has flushed
 # before we spawn siblings that read those files.
 AUTH_SETTLE_S = 2.0
+
+# Per-role env (moot.toml [agents.<role>].env) may reference secrets as
+# ${secret:NAME}; the value is read from this directory at launch so secrets
+# never live in committed config. Override with MOOT_SECRETS_DIR.
+SECRETS_DIR = os.environ.get("MOOT_SECRETS_DIR", "/home/node/.secrets")
+_SECRET_RE = re.compile(r"\$\{secret:([A-Za-z0-9._-]+)\}")
+
+
+def _resolve_secret_refs(value: str, role: str, key: str) -> str:
+    """Replace ``${secret:NAME}`` in ``value`` with the contents of
+    ``SECRETS_DIR/NAME`` (trailing whitespace stripped). Exits with a clear
+    error if a referenced secret file is missing or unreadable."""
+
+    def _repl(match: re.Match[str]) -> str:
+        name = match.group(1)
+        path = os.path.join(SECRETS_DIR, name)
+        try:
+            with open(path) as f:
+                return f.read().strip()
+        except OSError:
+            print(
+                f"Error: agents.{role}.env.{key} references secret {name!r}, "
+                f"but {path} is missing or unreadable."
+            )
+            raise SystemExit(1)
+
+    return _SECRET_RE.sub(_repl, value)
 
 
 def _session_name(role: str) -> str:
@@ -233,6 +262,15 @@ def _launch_role(
         "CONVO_API_URL": config.api_url,
         "CONVO_WORKTREE": wt_path,
     }
+    # Per-role provider binding: merge [agents.<role>].env from moot.toml,
+    # resolving any ${secret:NAME} references from the secrets dir at launch.
+    # This is how a heterogeneous fleet selects providers — enclave roles set
+    # nothing (clean subscription/OAuth) while build roles point
+    # ANTHROPIC_BASE_URL/key at the local proxy or a provider directly. Like the
+    # CONVO_* vars, these go through `tmux -e` (per-session): tmux sessions
+    # inherit the shared SERVER env, so per-role values must be set per session.
+    for env_key, env_val in agent_config.env.items():
+        pane_env[env_key] = _resolve_secret_refs(env_val, role, env_key)
     tmux_e_flags = " ".join(
         f"-e {shlex.quote(f'{k}={v}')}" for k, v in pane_env.items()
     )

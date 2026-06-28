@@ -26,6 +26,7 @@ def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
             self.model: str | None = None
             self.effort: str | None = None
             self.theme: str | None = None
+            self.env: dict[str, str] = {}
 
     class FakeConfig:
         def __init__(self) -> None:
@@ -137,6 +138,94 @@ def test_cmd_exec_launch_full_flow(
     # colored border is visible in single-pane sessions (wrong order →
     # silently ignored in some tmux versions).
     assert script.index("pane-border-status") < script.index("pane-border-style")
+
+
+def test_cmd_exec_per_role_env_and_secret_resolution(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object, tmp_path: Path
+) -> None:
+    """Per-role [agents.<role>].env reaches the pane via tmux -e, with
+    ${secret:NAME} resolved from SECRETS_DIR at launch (newline stripped)."""
+    import moot.launch as launch
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "llm-proxy-secret").write_text("PROXYSECRET\n")
+    monkeypatch.setattr(launch, "SECRETS_DIR", str(secrets_dir))
+
+    spec_agent = patch_config.agents["spec"]  # type: ignore[attr-defined]
+    spec_agent.model = "deepseek-v4-pro"
+    spec_agent.env = {
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:8090",
+        "ANTHROPIC_API_KEY": "${secret:llm-proxy-secret}",
+    }
+
+    captured_args: list[list[str]] = []
+    captured_env: list[dict[str, str] | None] = []
+    monkeypatch.setattr(launch, "up", lambda wd: "cid123")
+
+    def fake_exec_capture(
+        container_id: str,
+        args: list[str],
+        env: dict[str, str] | None = None,
+    ) -> tuple[int, str, str]:
+        captured_args.append(args)
+        captured_env.append(env)
+        if args[:2] == ["tmux", "has-session"]:
+            return (1, "", "")
+        if args[0] == "test" and args[1] == "-d":
+            return (1, "", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+    monkeypatch.setattr(launch, "exec_detached", lambda *a, **kw: None)
+    monkeypatch.setattr(launch, "container_id_or_none", lambda wd: "cid123")
+
+    launch.cmd_exec(argparse.Namespace(role="spec", prompt=None))
+
+    tmux_indices = [
+        i for i, a in enumerate(captured_args) if a[:2] == ["bash", "-lc"]
+    ]
+    assert tmux_indices
+    last = tmux_indices[-1]
+    script = captured_args[last][2]
+    # Provider binding via tmux -e; secret resolved with trailing newline gone.
+    assert "ANTHROPIC_BASE_URL=http://127.0.0.1:8090" in script
+    assert "ANTHROPIC_API_KEY=PROXYSECRET" in script
+    assert "${secret:" not in script  # reference was resolved, not passed through
+    # Per-role env goes through tmux -e (per session), not the shared exec env.
+    env = captured_env[last]
+    assert env is not None and "ANTHROPIC_API_KEY" not in env
+
+
+def test_cmd_exec_missing_secret_aborts(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object, tmp_path: Path
+) -> None:
+    """A ${secret:NAME} reference with no matching file aborts the launch."""
+    import moot.launch as launch
+
+    monkeypatch.setattr(launch, "SECRETS_DIR", str(tmp_path / "absent-dir"))
+    spec_agent = patch_config.agents["spec"]  # type: ignore[attr-defined]
+    spec_agent.env = {"ANTHROPIC_API_KEY": "${secret:absent}"}
+
+    monkeypatch.setattr(launch, "up", lambda wd: "cid123")
+
+    def fake_exec_capture(
+        container_id: str,
+        args: list[str],
+        env: dict[str, str] | None = None,
+    ) -> tuple[int, str, str]:
+        if args[:2] == ["tmux", "has-session"]:
+            return (1, "", "")
+        if args[0] == "test" and args[1] == "-d":
+            return (1, "", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+    monkeypatch.setattr(launch, "exec_detached", lambda *a, **kw: None)
+    monkeypatch.setattr(launch, "container_id_or_none", lambda wd: "cid123")
+
+    with pytest.raises(SystemExit):
+        launch.cmd_exec(argparse.Namespace(role="spec", prompt=None))
 
 
 def test_cmd_exec_launch_no_flags_when_unset(
