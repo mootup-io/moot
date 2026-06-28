@@ -1,2 +1,2 @@
 """moot — CLI + MCP adapters for Moot agent teams."""
-__version__ = "0.5.1"
+__version__ = "0.5.2"
