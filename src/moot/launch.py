@@ -439,11 +439,18 @@ def cmd_up(args: object) -> None:
 
     alive = 1 if cold_start else 0
     cascaded_roles: list[str] = []
+    launched_any = False
     for role in roles:
         if role not in config.agents:
             print(f"Warning: unknown role '{role}', skipping")
             continue
+        # Stagger launches: starting every agent at once storms the convo
+        # join_space endpoint (a single uvicorn) and hangs ~24/25 joins past
+        # Claude Code's MCP init timeout. A small gap between agents avoids it.
+        if launched_any and config.launch_stagger_seconds > 0:
+            time.sleep(config.launch_stagger_seconds)
         _launch_role(container_id, config, role, prompt_override=None)
+        launched_any = True
         cascaded_roles.append(role)
         alive += 1
 

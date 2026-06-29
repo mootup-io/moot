@@ -295,6 +295,38 @@ class TestPermissionMode:
         assert "permission_mode" in capsys.readouterr().out
 
 
+class TestLaunchStagger:
+    def _write(self, tmp_path: Path, harness_block: str) -> Path:
+        p = tmp_path / "moot.toml"
+        p.write_text(
+            '[convo]\napi_url = "https://x"\n' + harness_block + "\n[agents.spec]\n"
+        )
+        return p
+
+    def test_default_is_two_seconds(self, tmp_path: Path) -> None:
+        from moot.config import MootConfig
+
+        assert MootConfig(self._write(tmp_path, "")).launch_stagger_seconds == 2.0
+
+    def test_explicit_value(self, tmp_path: Path) -> None:
+        from moot.config import MootConfig
+
+        config = MootConfig(
+            self._write(tmp_path, "[harness]\nlaunch_stagger_seconds = 0.5\n")
+        )
+        assert config.launch_stagger_seconds == 0.5
+
+    def test_negative_rejected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from moot.config import MootConfig
+
+        path = self._write(tmp_path, "[harness]\nlaunch_stagger_seconds = -1\n")
+        with pytest.raises(SystemExit):
+            MootConfig(path)
+        assert "launch_stagger_seconds" in capsys.readouterr().out
+
+
 class TestModelTokenRegex:
     """Regression guard for _MODEL_TOKEN_RE: well-formed model identifiers
     (Claude aliases, Claude full IDs incl. a "[...]" context suffix, and

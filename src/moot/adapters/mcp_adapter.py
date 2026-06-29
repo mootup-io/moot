@@ -390,7 +390,7 @@ class MCPSpaceAdapter:
             resp = await adapter._request("POST", 
                 adapter._url("/response"),
                 json={
-                    "agent_id": adapter.agent_id,
+                    "participant_id": adapter.agent_id,
                     "agent_name": adapter.agent_name,
                     "text": text,
                     "parent_event_id": parent_event_id,
@@ -597,7 +597,7 @@ class MCPSpaceAdapter:
                 await adapter._request("POST",
                     adapter._url("/events"),
                     json={
-                        "speaker_id": adapter.agent_id,
+                        "participant_id": adapter.agent_id,
                         "speaker_name": adapter.agent_name,
                         "speaker_type": "agent",
                         "text": f"Deferred question: {reason}",
@@ -777,7 +777,7 @@ class MCPSpaceAdapter:
             resp = await adapter._request("POST", 
                 f"/api/spaces/{sid}/response",
                 json={
-                    "agent_id": adapter.agent_id,
+                    "participant_id": adapter.agent_id,
                     "agent_name": adapter.agent_name,
                     "text": text,
                     "parent_event_id": event_id,
@@ -857,7 +857,7 @@ class MCPSpaceAdapter:
             resp = await adapter._request("POST",
                 adapter._url("/response"),
                 json={
-                    "agent_id": adapter.agent_id,
+                    "participant_id": adapter.agent_id,
                     "agent_name": adapter.agent_name,
                     "text": text,
                     "parent_event_id": parent_event_id,

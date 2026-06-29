@@ -34,6 +34,7 @@ def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
             self.harness_type = "claude-code"
             self.permissions = "dangerously-skip"
             self.permission_mode = "bypassPermissions"
+            self.launch_stagger_seconds = 0.0  # tests don't stagger unless set
             self.agents = {"spec": FakeAgent("spec"), "impl": FakeAgent("impl")}
             self.roles = ["spec", "impl"]
             # Arbitrary for this fake — tests that exercise cold-start
@@ -640,3 +641,24 @@ def test_seed_claude_trust_is_best_effort(
         data["projects"]["/workspaces/proj/.worktrees/spec"]["hasTrustDialogAccepted"]
         is True
     )
+
+
+def test_cmd_up_staggers_cascade_launches(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
+) -> None:
+    """Successive cascade launches are separated by launch_stagger_seconds to
+    avoid storming the convo join_space endpoint."""
+    import moot.launch as launch
+
+    patch_config.launch_stagger_seconds = 1.5  # type: ignore[attr-defined]
+    monkeypatch.setattr(launch, "up", lambda wd: "cid")
+    monkeypatch.setattr(launch, "_credentials_present", lambda cid: True)  # warm
+    monkeypatch.setattr(launch, "_launch_role", lambda *a, **k: None)
+    monkeypatch.setattr(launch, "_auto_dismiss_dev_use_prompt", lambda *a, **k: None)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(launch.time, "sleep", lambda s: sleeps.append(s))
+
+    launch.cmd_up(argparse.Namespace(only=None))
+    # Two roles → exactly one 1.5s gap (before the 2nd launch, not the 1st).
+    assert sleeps == [1.5]

@@ -140,6 +140,20 @@ class MootConfig:
                 f"[harness].permission_mode = {self.permission_mode!r} is not one "
                 f"of {sorted(_PERMISSION_MODES)}"
             )
+        # Seconds to wait between launching successive agents on `moot up`.
+        # Launching the whole fleet at once storms the convo join_space endpoint
+        # (a single uvicorn), so stagger the cascade. 0 disables.
+        raw_stagger = harness.get("launch_stagger_seconds", 2.0)
+        if (
+            isinstance(raw_stagger, bool)
+            or not isinstance(raw_stagger, (int, float))
+            or raw_stagger < 0
+        ):
+            _config_error(
+                f"[harness].launch_stagger_seconds = {raw_stagger!r} must be a "
+                f"non-negative number"
+            )
+        self.launch_stagger_seconds: float = float(raw_stagger)
         self.default_model: str | None = harness.get("model")
         self.default_effort: str | None = harness.get("effort")
         self.agents: dict[str, AgentConfig] = {}
