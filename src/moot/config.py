@@ -35,6 +35,17 @@ _CLAUDE_ALIASES = (
 # well-formed names pass through to the harness (and the proxy) untouched.
 _MODEL_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:+/\[\]-]+$")
 _EFFORT_ALLOWLIST = {"low", "medium", "high", "xhigh", "max"}
+# Claude Code --permission-mode choices (CC 2.1.x). Agents default to
+# "bypassPermissions": they run in a sandboxed devcontainer with limited
+# capabilities, so per-tool prompts only get in the way.
+_PERMISSION_MODES = {
+    "acceptEdits",
+    "auto",
+    "bypassPermissions",
+    "default",
+    "dontAsk",
+    "plan",
+}
 
 
 def _config_error(msg: str) -> None:
@@ -120,6 +131,15 @@ class MootConfig:
         harness = data.get("harness", {})
         self.harness_type: str = harness.get("type", "claude-code")
         self.permissions: str = harness.get("permissions", "dangerously-skip")
+        # Claude Code permission mode for launched agents. Default
+        # "bypassPermissions" — agents run sandboxed in the devcontainer with
+        # limited capabilities, so they should operate without per-tool prompts.
+        self.permission_mode: str = harness.get("permission_mode", "bypassPermissions")
+        if self.permission_mode not in _PERMISSION_MODES:
+            _config_error(
+                f"[harness].permission_mode = {self.permission_mode!r} is not one "
+                f"of {sorted(_PERMISSION_MODES)}"
+            )
         self.default_model: str | None = harness.get("model")
         self.default_effort: str | None = harness.get("effort")
         self.agents: dict[str, AgentConfig] = {}

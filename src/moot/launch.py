@@ -1,12 +1,14 @@
 """Launch Claude agents in tmux sessions inside the bundled devcontainer."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from moot.config import MootConfig, find_config
 from moot.devcontainer import (
@@ -19,6 +21,7 @@ from moot.devcontainer import (
 
 CREDENTIALS_PATH = "/home/node/.claude/.credentials.json"
 SETTINGS_PATH = "/home/node/.claude/settings.json"
+CLAUDE_JSON_PATH = "/home/node/.claude.json"
 AUTH_POLL_INTERVAL_S = 5.0
 # Short grace period after first-run state has fully landed on disk.
 # Claude writes credentials + settings incrementally during the theme +
@@ -52,6 +55,42 @@ def _resolve_secret_refs(value: str, role: str, key: str) -> str:
             raise SystemExit(1)
 
     return _SECRET_RE.sub(_repl, value)
+
+
+def _seed_claude_trust(worktree: str) -> None:
+    """Pre-accept Claude Code's per-directory trust + onboarding for `worktree`.
+
+    Trust is per-directory state in ~/.claude.json
+    (``projects[<dir>].hasTrustDialogAccepted``); only the main checkout is
+    trusted, so freshly-created worktrees would block on the trust dialog. Seed
+    the entry (same stamping discipline as .moot/actors.json) so launched agents
+    reach the model. Also marks the auto-mode entry warning seen. Best-effort —
+    never blocks a launch.
+    """
+    path = Path(CLAUDE_JSON_PATH)
+    try:
+        data: dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (json.JSONDecodeError, OSError):
+                data = {}
+        data["hasSeenAutoModeEntryWarning"] = True
+        projects = data.get("projects")
+        if not isinstance(projects, dict):
+            projects = {}
+            data["projects"] = projects
+        entry = projects.get(worktree)
+        if not isinstance(entry, dict):
+            entry = {}
+            projects[worktree] = entry
+        entry["hasTrustDialogAccepted"] = True
+        entry["hasCompletedProjectOnboarding"] = True
+        path.write_text(json.dumps(data, indent=2))
+    except OSError:
+        pass  # never block a launch on trust-seeding
 
 
 def _session_name(role: str) -> str:
@@ -210,6 +249,7 @@ def _launch_role(
 
     project = Path.cwd().name
     wt_path = _ensure_worktree(container_id, project, role)
+    _seed_claude_trust(wt_path)
 
     agent_config = config.agents[role]
     prompt = prompt_override or agent_config.startup_prompt
@@ -239,6 +279,7 @@ def _launch_role(
             claude_cmd = (
                 "claude "
                 "--dangerously-load-development-channels server:convo-channel "
+                f"--permission-mode {shlex.quote(config.permission_mode)} "
                 f"{model_flag}{effort_flag}"
                 f"-- {shlex.quote(prompt)}"
             )
@@ -406,7 +447,10 @@ def cmd_up(args: object) -> None:
         cascaded_roles.append(role)
         alive += 1
 
-    if cold_start and cascaded_roles:
+    # Dismiss the --dangerously-load-development-channels warning on every
+    # launched role. The warning isn't persisted, so it re-prompts on every
+    # launch — gating this on cold_start left warm-start agents stalled on it.
+    if cascaded_roles:
         _auto_dismiss_dev_use_prompt(container_id, cascaded_roles)
 
     print(

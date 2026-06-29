@@ -260,6 +260,41 @@ class TestAgentProfiles:
             assert role.theme is None
 
 
+class TestPermissionMode:
+    def _write(self, tmp_path: Path, harness_block: str) -> Path:
+        p = tmp_path / "moot.toml"
+        p.write_text(
+            '[convo]\napi_url = "https://x"\n'
+            + harness_block
+            + "\n[agents.spec]\n"
+        )
+        return p
+
+    def test_default_is_bypass_permissions(self, tmp_path: Path) -> None:
+        from moot.config import MootConfig
+
+        config = MootConfig(self._write(tmp_path, ""))
+        assert config.permission_mode == "bypassPermissions"
+
+    def test_explicit_mode_honored(self, tmp_path: Path) -> None:
+        from moot.config import MootConfig
+
+        config = MootConfig(
+            self._write(tmp_path, '[harness]\npermission_mode = "auto"\n')
+        )
+        assert config.permission_mode == "auto"
+
+    def test_invalid_mode_rejected(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from moot.config import MootConfig
+
+        path = self._write(tmp_path, '[harness]\npermission_mode = "yolo"\n')
+        with pytest.raises(SystemExit):
+            MootConfig(path)
+        assert "permission_mode" in capsys.readouterr().out
+
+
 class TestModelTokenRegex:
     """Regression guard for _MODEL_TOKEN_RE: well-formed model identifiers
     (Claude aliases, Claude full IDs incl. a "[...]" context suffix, and

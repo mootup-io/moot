@@ -33,6 +33,7 @@ def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
             self.api_url = "https://mootup.io"
             self.harness_type = "claude-code"
             self.permissions = "dangerously-skip"
+            self.permission_mode = "bypassPermissions"
             self.agents = {"spec": FakeAgent("spec"), "impl": FakeAgent("impl")}
             self.roles = ["spec", "impl"]
             # Arbitrary for this fake — tests that exercise cold-start
@@ -130,6 +131,8 @@ def test_cmd_exec_launch_full_flow(
     assert "CONVO_API_KEY" not in env
     assert "CONVO_API_KEY" not in script
 
+    # Agents launch in bypassPermissions mode (sandboxed devcontainer).
+    assert "--permission-mode bypassPermissions" in script
     # Per-role profile flags reach the claude invocation + tmux theme.
     assert "--model opus" in script
     assert "--effort high" in script
@@ -518,10 +521,19 @@ def test_cmd_up_warm_start_launches_all_in_parallel(
         "_launch_role",
         lambda cid, cfg, role, prompt_override: launched.append(role),
     )
+    # The dev-channels warning is dismissed on warm start too (mock it so it
+    # doesn't hit the forbidden time.sleep above).
+    dismissed: list[str] = []
+    monkeypatch.setattr(
+        launch,
+        "_auto_dismiss_dev_use_prompt",
+        lambda cid, roles: dismissed.extend(roles),
+    )
 
     ns = argparse.Namespace(only=None)
     launch.cmd_up(ns)
     assert launched == ["spec", "impl"]
+    assert dismissed == ["spec", "impl"]  # ungated from cold_start
     out = capsys.readouterr().out
     assert "First-time setup" not in out
     assert "Started 2 agents" in out
@@ -577,3 +589,54 @@ def test_cmd_exec_errors_when_credentials_missing(
         launch.cmd_exec(ns)
     assert exc.value.code == 1
     assert "claude credentials not yet present" in capsys.readouterr().out
+
+
+def test_seed_claude_trust_seeds_worktree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pre-accepts the per-worktree trust + onboarding in ~/.claude.json and
+    preserves existing entries (so launched agents skip the trust dialog)."""
+    import json
+
+    import moot.launch as launch
+
+    claude_json = tmp_path / "claude.json"
+    claude_json.write_text(
+        json.dumps(
+            {"projects": {"/workspaces/proj": {"hasTrustDialogAccepted": True}}}
+        )
+    )
+    monkeypatch.setattr(launch, "CLAUDE_JSON_PATH", str(claude_json))
+
+    launch._seed_claude_trust("/workspaces/proj/.worktrees/spec")
+
+    data = json.loads(claude_json.read_text())
+    wt = data["projects"]["/workspaces/proj/.worktrees/spec"]
+    assert wt["hasTrustDialogAccepted"] is True
+    assert wt["hasCompletedProjectOnboarding"] is True
+    assert data["hasSeenAutoModeEntryWarning"] is True
+    # Existing project entry is preserved.
+    assert data["projects"]["/workspaces/proj"]["hasTrustDialogAccepted"] is True
+
+
+def test_seed_claude_trust_is_best_effort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Writes a fresh file when absent; an unwritable path is swallowed."""
+    import json
+
+    import moot.launch as launch
+
+    # Unwritable (parent dir missing) → swallowed, no raise.
+    monkeypatch.setattr(launch, "CLAUDE_JSON_PATH", str(tmp_path / "missing" / "c.json"))
+    launch._seed_claude_trust("/workspaces/proj/.worktrees/spec")
+
+    # Fresh file when the directory exists.
+    fresh = tmp_path / "claude.json"
+    monkeypatch.setattr(launch, "CLAUDE_JSON_PATH", str(fresh))
+    launch._seed_claude_trust("/workspaces/proj/.worktrees/spec")
+    data = json.loads(fresh.read_text())
+    assert (
+        data["projects"]["/workspaces/proj/.worktrees/spec"]["hasTrustDialogAccepted"]
+        is True
+    )
