@@ -2,7 +2,9 @@ import logging
 
 import pytest
 
-from moot.adapters import channel_adapter
+from types import SimpleNamespace
+
+from moot.adapters import channel_adapter, tmux_delivery
 from moot.adapters.channel_adapter import ChannelAdapter
 from moot.adapters.notify_runner import default_tmux_session
 
@@ -114,3 +116,43 @@ async def test_channel_adapter_tmux_failure_logs_failure_not_success(
     assert not any(
         "Pushed mention notification via tmux" in message for message in messages
     )
+
+
+@pytest.mark.asyncio
+async def test_tmux_delivery_sends_delayed_carriage_return(monkeypatch):
+    calls = []
+    sleeps = []
+
+    async def fake_run_process(args, *, check=False):
+        calls.append((args, check))
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(tmux_delivery.anyio, "run_process", fake_run_process)
+    monkeypatch.setattr(tmux_delivery.anyio, "sleep", fake_sleep)
+
+    pushed = await tmux_delivery.send_channel_xml_via_tmux(
+        "moot-kernel-leader",
+        "hello\nthere",
+        {"event_type": "mention"},
+        enter_delay_seconds=0.25,
+    )
+
+    assert pushed is True
+    assert sleeps == [0.25]
+    assert calls == [
+        (
+            [
+                "tmux",
+                "send-keys",
+                "-t",
+                "moot-kernel-leader",
+                "-l",
+                '<channel event_type="mention">hello there</channel>',
+            ],
+            False,
+        ),
+        (["tmux", "send-keys", "-t", "moot-kernel-leader", "C-m"], False),
+    ]

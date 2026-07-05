@@ -31,10 +31,11 @@ async def send_channel_xml_via_tmux(
     meta: dict[str, str],
     *,
     log_success: bool = True,
+    enter_delay_seconds: float = 0.15,
 ) -> bool:
     """Inject a channel notification into a tmux pane.
 
-    Returns True only after both the literal text and Enter key were sent.
+    Returns True only after both the literal text and delayed carriage return were sent.
     """
     text = format_channel_xml(content, meta)
     flat_content = content.replace("\n", " ")
@@ -54,14 +55,15 @@ async def send_channel_xml_via_tmux(
             )
             return False
 
+        await anyio.sleep(enter_delay_seconds)
         enter = await anyio.run_process(
-            ["tmux", "send-keys", "-t", tmux_session, "Enter"],
+            ["tmux", "send-keys", "-t", tmux_session, "C-m"],
             check=False,
         )
         if enter.returncode != 0:
             stderr = enter.stderr.decode().strip() if enter.stderr else ""
             logger.warning(
-                "tmux Enter send failed (exit %d): %s -- session '%s' may not exist",
+                "tmux C-m send failed (exit %d): %s -- session '%s' may not exist",
                 enter.returncode,
                 stderr,
                 tmux_session,
