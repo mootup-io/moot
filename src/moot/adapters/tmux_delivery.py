@@ -18,6 +18,68 @@ from moot.adapters.notification_core import NotificationCore
 logger = logging.getLogger("convo.tmux")
 
 
+def format_channel_xml(content: str, meta: dict[str, str]) -> str:
+    """Format a channel notification as one XML-ish line for stdin injection."""
+    attrs = " ".join(f'{k}="{v}"' for k, v in meta.items())
+    flat_content = content.replace("\n", " ")
+    return f"<channel {attrs}>{flat_content}</channel>"
+
+
+async def send_channel_xml_via_tmux(
+    tmux_session: str,
+    content: str,
+    meta: dict[str, str],
+    *,
+    log_success: bool = True,
+) -> bool:
+    """Inject a channel notification into a tmux pane.
+
+    Returns True only after both the literal text and Enter key were sent.
+    """
+    text = format_channel_xml(content, meta)
+    flat_content = content.replace("\n", " ")
+
+    try:
+        result = await anyio.run_process(
+            ["tmux", "send-keys", "-t", tmux_session, "-l", text],
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode().strip() if result.stderr else ""
+            logger.warning(
+                "tmux send-keys failed (exit %d): %s -- session '%s' may not exist",
+                result.returncode,
+                stderr,
+                tmux_session,
+            )
+            return False
+
+        enter = await anyio.run_process(
+            ["tmux", "send-keys", "-t", tmux_session, "Enter"],
+            check=False,
+        )
+        if enter.returncode != 0:
+            stderr = enter.stderr.decode().strip() if enter.stderr else ""
+            logger.warning(
+                "tmux Enter send failed (exit %d): %s -- session '%s' may not exist",
+                enter.returncode,
+                stderr,
+                tmux_session,
+            )
+            return False
+
+        if log_success:
+            logger.info(
+                "Pushed %s notification via tmux: %s",
+                meta.get("event_type", "?"),
+                flat_content[:80],
+            )
+        return True
+    except Exception:
+        logger.exception("Failed to inject notification via tmux")
+        return False
+
+
 class TmuxDelivery(NotificationCore):
     def __init__(
         self,
@@ -51,39 +113,7 @@ class TmuxDelivery(NotificationCore):
 
     async def _push_notification(self, content: str, meta: dict[str, str]) -> None:
         """Inject notification into tmux pane as a <channel> XML block."""
-        # Build <channel> XML -- single line for clean stdin injection
-        attrs = " ".join(f'{k}="{v}"' for k, v in meta.items())
-        flat_content = content.replace("\n", " ")
-        text = f"<channel {attrs}>{flat_content}</channel>"
-
-        try:
-            # -l: literal text (no key name interpretation)
-            result = await anyio.run_process(
-                ["tmux", "send-keys", "-t", self._tmux_session, "-l", text],
-                check=False,
-            )
-            if result.returncode != 0:
-                stderr = result.stderr.decode().strip() if result.stderr else ""
-                logger.warning(
-                    "tmux send-keys failed (exit %d): %s -- session '%s' may not exist",
-                    result.returncode,
-                    stderr,
-                    self._tmux_session,
-                )
-                return
-
-            # Press Enter to submit the text as input
-            await anyio.run_process(
-                ["tmux", "send-keys", "-t", self._tmux_session, "Enter"],
-                check=False,
-            )
-            logger.info(
-                "Pushed %s notification via tmux: %s",
-                meta.get("event_type", "?"),
-                flat_content[:80],
-            )
-        except Exception:
-            logger.exception("Failed to inject notification via tmux")
+        await send_channel_xml_via_tmux(self._tmux_session, content, meta)
 
     # -- Space joining -------------------------------------------------------
 
@@ -101,9 +131,7 @@ class TmuxDelivery(NotificationCore):
         if resp.status_code in (200, 201):
             logger.info("Joined space %s", space_id)
         else:
-            logger.warning(
-                "Failed to join space %s: %d", space_id, resp.status_code
-            )
+            logger.warning("Failed to join space %s: %d", space_id, resp.status_code)
 
     # -- Lifecycle -----------------------------------------------------------
 

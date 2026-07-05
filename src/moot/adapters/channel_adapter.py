@@ -1,8 +1,9 @@
-"""Channel adapter — push notifications to Claude Code via claude/channel.
+"""Channel adapter -- push notifications through MCP or tmux.
 
 MCP channel delivery backend for NotificationCore. Exposes subscribe,
-unsubscribe, and list_subscriptions as MCP tools, and delivers
-notifications as JSONRPC notifications via the claude/channel capability.
+unsubscribe, and list_subscriptions as MCP tools. Claude Code receives
+notifications as JSONRPC notifications via the claude/channel capability;
+other harnesses receive the same notifications through tmux stdin injection.
 
 This adapter uses the low-level MCP Server (not FastMCP) because it
 needs to declare the experimental claude/channel capability and send
@@ -12,6 +13,9 @@ custom notifications from background tasks.
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -22,6 +26,7 @@ from mcp.shared.message import SessionMessage
 from mcp.types import JSONRPCMessage, JSONRPCNotification, TextContent, Tool
 
 from moot.adapters.notification_core import NotificationCore
+from moot.adapters.tmux_delivery import send_channel_xml_via_tmux
 
 logger = logging.getLogger("convo.channel")
 
@@ -45,8 +50,11 @@ class ChannelAdapter(NotificationCore):
             auto_space_id=auto_space_id,
         )
 
-        # Write stream for pushing notifications (set during run)
+        # Write stream for pushing Claude channel notifications (set during run).
         self._write_stream: ObjectSendStream[SessionMessage] | None = None
+
+        role = os.environ.get("CONVO_ROLE", agent_id)
+        self._tmux_session = os.environ.get("CONVO_TMUX_SESSION") or f"moot-{role}"
 
         self._server = Server(name="convo-channel", version="0.1.0")
         self._register_tools()
@@ -170,14 +178,18 @@ class ChannelAdapter(NotificationCore):
 
         total = len(self._subscriptions)
         if new_count == 0 and total > 0:
-            return [TextContent(
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Already subscribed to all {total} spaces.",
+                )
+            ]
+        return [
+            TextContent(
                 type="text",
-                text=f"Already subscribed to all {total} spaces.",
-            )]
-        return [TextContent(
-            type="text",
-            text=f"Subscribed to {new_count} new space(s). Total: {total} active subscriptions.",
-        )]
+                text=f"Subscribed to {new_count} new space(s). Total: {total} active subscriptions.",
+            )
+        ]
 
     async def _handle_unsubscribe(self, space_id: str) -> list[TextContent]:
         scope = self._subscriptions.pop(space_id, None)
@@ -206,10 +218,92 @@ class ChannelAdapter(NotificationCore):
 
     # ── Notification delivery ───────────────────────────────────────
 
+    def _pane_command(self) -> str | None:
+        try:
+            result = subprocess.run(
+                [
+                    "tmux",
+                    "display-message",
+                    "-p",
+                    "-t",
+                    self._tmux_session,
+                    "#{pane_current_command}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.debug(
+                "Could not inspect tmux pane for session %s: %s",
+                self._tmux_session,
+                exc,
+            )
+            return None
+
+        if result.returncode != 0:
+            logger.debug(
+                "Could not inspect tmux pane for session %s (exit %d): %s",
+                self._tmux_session,
+                result.returncode,
+                result.stderr.strip(),
+            )
+            return None
+        return result.stdout.strip() or None
+
+    def _delivery_backend(self) -> tuple[str, str | None]:
+        pane_command = self._pane_command()
+        if pane_command is None:
+            logger.warning(
+                "Could not identify tmux pane command for session %s; using Claude channel backend",
+                self._tmux_session,
+            )
+            return "claude", None
+
+        executable = Path(pane_command).name.lower()
+        if executable == "claude":
+            return "claude", pane_command
+        return "tmux", pane_command
+
     async def _push_notification(self, content: str, meta: dict[str, str]) -> None:
-        if not self._write_stream:
-            logger.warning("Cannot push notification — write stream not available")
+        backend, pane_command = self._delivery_backend()
+        logger.info(
+            "Selected %s notification backend for %s (session=%s, pane_command=%s)",
+            backend,
+            meta.get("event_type", "?"),
+            self._tmux_session,
+            pane_command or "unknown",
+        )
+
+        if backend == "tmux":
+            pushed = await send_channel_xml_via_tmux(
+                self._tmux_session, content, meta, log_success=False
+            )
+            if pushed:
+                logger.info(
+                    "Pushed %s notification via tmux: %s",
+                    meta.get("event_type", "?"),
+                    content.replace("\n", " ")[:80],
+                )
+            else:
+                logger.warning(
+                    "Failed to push %s notification via tmux for session %s",
+                    meta.get("event_type", "?"),
+                    self._tmux_session,
+                )
             return
+
+        await self._push_claude_channel_notification(content, meta)
+
+    async def _push_claude_channel_notification(
+        self, content: str, meta: dict[str, str]
+    ) -> bool:
+        if not self._write_stream:
+            logger.warning(
+                "Cannot push Claude channel notification -- write stream not available"
+            )
+            return False
         notification = JSONRPCNotification(
             jsonrpc="2.0",
             method="notifications/claude/channel",
@@ -219,12 +313,16 @@ class ChannelAdapter(NotificationCore):
         try:
             await self._write_stream.send(message)
             logger.info(
-                "Pushed %s notification: %s",
+                "Pushed %s notification via Claude channel: %s",
                 meta.get("event_type", "?"),
                 content[:80],
             )
+            return True
         except anyio.ClosedResourceError:
-            logger.warning("Write stream closed, cannot push notification")
+            logger.warning(
+                "Write stream closed, cannot push Claude channel notification"
+            )
+            return False
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
