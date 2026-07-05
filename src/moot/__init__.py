@@ -1,2 +1,8 @@
 """moot — CLI + MCP adapters for Moot agent teams."""
-__version__ = "0.5.6"
+
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("mootup")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
