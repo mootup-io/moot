@@ -135,6 +135,51 @@ class TestAgentProfiles:
         assert spec.effort == "high"
         assert spec.theme == "magenta"
 
+    def test_codex_model_reasoning_effort_round_trip(self, tmp_path: Path) -> None:
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            "[convo]\n"
+            'api_url = "https://x"\n'
+            "\n"
+            "[harness]\n"
+            'type = "codex"\n'
+            'model_reasoning_effort = "medium"\n'
+            "\n"
+            "[agents.spec]\n"
+            'display_name = "Spec"\n'
+            'model = "gpt-5.4"\n'
+            'model_reasoning_effort = "high"\n'
+            "\n"
+            "[agents.impl]\n"
+            'display_name = "Impl"\n'
+        )
+        from moot.config import MootConfig
+
+        config = MootConfig(toml_path)
+        assert config.harness_type == "codex"
+        assert config.default_model_reasoning_effort == "medium"
+        assert config.agents["spec"].harness == "codex"
+        assert config.agents["spec"].model == "gpt-5.4"
+        assert config.agents["spec"].model_reasoning_effort == "high"
+        assert config.agents["impl"].model_reasoning_effort == "medium"
+
+    def test_invalid_model_reasoning_effort_rejects_at_load(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        toml_path = tmp_path / "moot.toml"
+        toml_path.write_text(
+            "[convo]\n"
+            'api_url = "https://x"\n'
+            "\n"
+            "[agents.spec]\n"
+            'model_reasoning_effort = "extreme"\n'
+        )
+        from moot.config import MootConfig
+
+        with pytest.raises(SystemExit):
+            MootConfig(toml_path)
+        assert "model_reasoning_effort" in capsys.readouterr().out
+
     def test_global_defaults_cascade_to_agent(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "moot.toml"
         toml_path.write_text(
@@ -450,6 +495,7 @@ class TestCmdConfigShow:
             'harness = "claude-code"\n'
             'model = "opus"\n'
             'effort = "high"\n'
+            'model_reasoning_effort = "xhigh"\n'
             'theme = "magenta"\n',
         )
         assert "Roles:" in out
@@ -457,6 +503,7 @@ class TestCmdConfigShow:
         assert "harness=claude-code" in out
         assert "model=opus" in out
         assert "effort=high" in out
+        assert "model_reasoning_effort=xhigh" in out
         assert "theme=magenta" in out
 
     def test_config_show_cascade_indicator(
@@ -473,13 +520,18 @@ class TestCmdConfigShow:
             'type = "claude-code"\n'
             'model = "sonnet"\n'
             'effort = "medium"\n'
+            'model_reasoning_effort = "high"\n'
             "\n"
             "[agents.leader]\n"
             'display_name = "Leader"\n',
         )
-        assert "Global defaults: model=sonnet  effort=medium" in out
+        assert (
+            "Global defaults: model=sonnet  effort=medium  "
+            "model_reasoning_effort=high"
+        ) in out
         assert "model=sonnet (default)" in out
         assert "effort=medium (default)" in out
+        assert "model_reasoning_effort=high (default)" in out
 
     def test_config_show_role_default_theme(
         self,

@@ -25,6 +25,7 @@ def patch_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> object:
             self.harness: str = "claude-code"
             self.model: str | None = None
             self.effort: str | None = None
+            self.model_reasoning_effort: str | None = None
             self.theme: str | None = None
             self.env: dict[str, str] = {}
 
@@ -269,6 +270,74 @@ def test_cmd_exec_launch_no_flags_when_unset(
     assert "--effort" not in script
     assert "pane-border-status" not in script
     assert "pane-border-style" not in script
+
+
+def test_cmd_exec_codex_harness_threads_model_reasoning_effort(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
+) -> None:
+    """Codex agents receive model_reasoning_effort as a direct config override."""
+    import moot.launch as launch
+
+    spec_agent = patch_config.agents["spec"]  # type: ignore[attr-defined]
+    spec_agent.harness = "codex"
+    spec_agent.model = "gpt-5.4"
+    spec_agent.model_reasoning_effort = "high"
+
+    captured_args: list[list[str]] = []
+    monkeypatch.setattr(launch, "up", lambda wd: "cidCodex")
+
+    def fake_exec_capture(
+        container_id: str, args: list[str], env: dict[str, str] | None = None
+    ) -> tuple[int, str, str]:
+        captured_args.append(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return (1, "", "")
+        if args[0] == "test" and args[1] == "-d":
+            return (1, "", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+    monkeypatch.setattr(launch, "exec_detached", lambda *a, **kw: None)
+    monkeypatch.setattr(launch, "container_id_or_none", lambda wd: "cidCodex")
+
+    launch.cmd_exec(argparse.Namespace(role="spec", prompt=None))
+
+    tmux_indices = [
+        i for i, a in enumerate(captured_args) if a[:2] == ["bash", "-lc"]
+    ]
+    assert tmux_indices
+    script = captured_args[tmux_indices[-1]][2]
+    assert (
+        "codex --model gpt-5.4 -c model_reasoning_effort=high -- 'Hello spec'"
+        in script
+    )
+    assert "--effort" not in script
+    assert "--permission-mode" not in script
+    assert "--dangerously-load-development-channels" not in script
+
+
+def test_cmd_exec_codex_harness_skips_claude_credentials_check(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
+) -> None:
+    """Codex agents can launch without Claude credentials in the container."""
+    import moot.launch as launch
+
+    spec_agent = patch_config.agents["spec"]  # type: ignore[attr-defined]
+    spec_agent.harness = "codex"
+
+    monkeypatch.setattr(launch, "up", lambda wd: "cidCodex")
+    monkeypatch.setattr(launch, "_launch_role", lambda *a, **k: None)
+
+    def fake_exec_capture(
+        container_id: str, args: list[str], env: dict[str, str] | None = None
+    ) -> tuple[int, str, str]:
+        if args[:3] == ["test", "-s", launch.CREDENTIALS_PATH]:
+            raise AssertionError("Codex exec must not check Claude credentials")
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+
+    launch.cmd_exec(argparse.Namespace(role="spec", prompt=None))
 
 
 def test_cmd_exec_cursor_harness_errors_cleanly(
@@ -538,6 +607,41 @@ def test_cmd_up_warm_start_launches_all_in_parallel(
     out = capsys.readouterr().out
     assert "First-time setup" not in out
     assert "Started 2 agents" in out
+
+
+def test_cmd_up_codex_only_skips_claude_cold_start_and_disclaimer(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
+) -> None:
+    """Codex-only teams should not wait for Claude auth or dismiss Claude prompts."""
+    import moot.launch as launch
+
+    for agent in patch_config.agents.values():  # type: ignore[attr-defined]
+        agent.harness = "codex"
+
+    monkeypatch.setattr(launch, "up", lambda wd: "cidCodex")
+
+    def fake_credentials_present(cid: str) -> bool:
+        raise AssertionError("Codex-only up must not check Claude credentials")
+
+    monkeypatch.setattr(launch, "_credentials_present", fake_credentials_present)
+
+    launched: list[str] = []
+    monkeypatch.setattr(
+        launch,
+        "_launch_role",
+        lambda cid, cfg, role, prompt_override: launched.append(role),
+    )
+    monkeypatch.setattr(
+        launch,
+        "_auto_dismiss_dev_use_prompt",
+        lambda cid, roles: (_ for _ in ()).throw(
+            AssertionError("Codex-only up must not dismiss Claude prompts")
+        ),
+    )
+
+    launch.cmd_up(argparse.Namespace(only=None))
+
+    assert launched == ["spec", "impl"]
 
 
 def test_cmd_up_cold_start_requires_human_interface_in_only(

@@ -12,7 +12,7 @@ MOOT_TOML = "moot.toml"
 MOOT_DIR = ".moot"
 ACTORS_JSON = f"{MOOT_DIR}/actors.json"
 
-_HARNESS_ALLOWLIST = {"claude-code", "cursor", "aider"}
+_HARNESS_ALLOWLIST = {"claude-code", "codex", "cursor", "aider"}
 # Claude alias forms Claude Code resolves directly. Listed for the error message;
 # they are a subset of what _MODEL_TOKEN_RE accepts.
 _CLAUDE_ALIASES = (
@@ -62,6 +62,7 @@ class AgentConfig:
         default_harness: str = "claude-code",
         default_model: str | None = None,
         default_effort: str | None = None,
+        default_model_reasoning_effort: str | None = None,
     ) -> None:
         self.role = role
         self.display_name: str = data.get("display_name", role.title())
@@ -78,6 +79,9 @@ class AgentConfig:
         self.harness: str = data.get("harness", default_harness)
         self.model: str | None = data.get("model", default_model)
         self.effort: str | None = data.get("effort", default_effort)
+        self.model_reasoning_effort: str | None = data.get(
+            "model_reasoning_effort", default_model_reasoning_effort
+        )
         self.theme: str | None = data.get("theme")
         # Per-role environment variables merged into the agent's launch env
         # (e.g. ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY to bind a non-Anthropic
@@ -106,6 +110,15 @@ class AgentConfig:
         if self.effort is not None and self.effort not in _EFFORT_ALLOWLIST:
             _config_error(
                 f"agents.{self.role}.effort = {self.effort!r} is not one of "
+                f"{sorted(_EFFORT_ALLOWLIST)}"
+            )
+        if (
+            self.model_reasoning_effort is not None
+            and self.model_reasoning_effort not in _EFFORT_ALLOWLIST
+        ):
+            _config_error(
+                f"agents.{self.role}.model_reasoning_effort = "
+                f"{self.model_reasoning_effort!r} is not one of "
                 f"{sorted(_EFFORT_ALLOWLIST)}"
             )
         if not isinstance(self.env, dict):
@@ -156,6 +169,9 @@ class MootConfig:
         self.launch_stagger_seconds: float = float(raw_stagger)
         self.default_model: str | None = harness.get("model")
         self.default_effort: str | None = harness.get("effort")
+        self.default_model_reasoning_effort: str | None = harness.get(
+            "model_reasoning_effort"
+        )
         self.agents: dict[str, AgentConfig] = {}
         for role, agent_data in data.get("agents", {}).items():
             self.agents[role] = AgentConfig(
@@ -164,6 +180,7 @@ class MootConfig:
                 default_harness=self.harness_type,
                 default_model=self.default_model,
                 default_effort=self.default_effort,
+                default_model_reasoning_effort=self.default_model_reasoning_effort,
             )
         # Role the operator talks to directly. `moot up` launches this one
         # first on a cold start (no claude credentials yet) so first-time login
@@ -307,23 +324,32 @@ def cmd_config(args: object) -> None:
         print(f"Harness: {config.harness_type}")
         gm = config.default_model
         ge = config.default_effort
-        if gm is not None or ge is not None:
+        gre = config.default_model_reasoning_effort
+        if gm is not None or ge is not None or gre is not None:
             gm_s = gm if gm is not None else "(unset)"
             ge_s = ge if ge is not None else "(unset)"
-            print(f"Global defaults: model={gm_s}  effort={ge_s}")
+            defaults = f"Global defaults: model={gm_s}  effort={ge_s}"
+            if gre is not None:
+                defaults += f"  model_reasoning_effort={gre}"
+            print(defaults)
         print("Roles:")
         for role_name, agent in config.agents.items():
             raw_model = agent._raw.get("model")
             raw_effort = agent._raw.get("effort")
+            raw_model_reasoning_effort = agent._raw.get("model_reasoning_effort")
             model = _render_with_default(raw_model, gm, "(default)")
             effort = _render_with_default(raw_effort, ge, "(default)")
+            model_reasoning_effort = _render_with_default(
+                raw_model_reasoning_effort, gre, "(default)"
+            )
             theme_default = _ADOPTED_ROLE_DEFAULTS.get(role_name.lower(), {}).get(
                 "theme"
             )
             theme = _render_with_default(agent.theme, theme_default, "(role default)")
             print(
                 f"  {role_name:<16} harness={agent.harness}  "
-                f"model={model}  effort={effort}  theme={theme}"
+                f"model={model}  effort={effort}  "
+                f"model_reasoning_effort={model_reasoning_effort}  theme={theme}"
             )
     elif sub == "set":
         key = getattr(args, "key")

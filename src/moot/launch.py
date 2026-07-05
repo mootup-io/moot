@@ -247,16 +247,17 @@ def _launch_role(
         print(f"{role} already running in {session}")
         return
 
-    project = Path.cwd().name
-    wt_path = _ensure_worktree(container_id, project, role)
-    _seed_claude_trust(wt_path)
-
     agent_config = config.agents[role]
     prompt = prompt_override or agent_config.startup_prompt
 
     # Per-role harness selection. Falls back to the global default set
     # on AgentConfig at moot.toml-load time.
     harness = agent_config.harness
+
+    project = Path.cwd().name
+    wt_path = _ensure_worktree(container_id, project, role)
+    if harness == "claude-code":
+        _seed_claude_trust(wt_path)
 
     # The claude command is built INLINE (per D2). The two literal strings
     # '--dangerously-load-development-channels' and 'server:convo-channel'
@@ -276,11 +277,31 @@ def _launch_role(
                 if agent_config.effort
                 else ""
             )
-            claude_cmd = (
+            agent_cmd = (
                 "claude "
                 "--dangerously-load-development-channels server:convo-channel "
                 f"--permission-mode {shlex.quote(config.permission_mode)} "
                 f"{model_flag}{effort_flag}"
+                f"-- {shlex.quote(prompt)}"
+            )
+        case "codex":
+            model_flag = (
+                f"--model {shlex.quote(agent_config.model)} "
+                if agent_config.model
+                else ""
+            )
+            model_reasoning_effort = getattr(
+                agent_config, "model_reasoning_effort", None
+            )
+            reasoning_flag = (
+                "-c "
+                f"{shlex.quote(f'model_reasoning_effort={model_reasoning_effort}')} "
+                if model_reasoning_effort
+                else ""
+            )
+            agent_cmd = (
+                "codex "
+                f"{model_flag}{reasoning_flag}"
                 f"-- {shlex.quote(prompt)}"
             )
         case _:
@@ -320,7 +341,7 @@ def _launch_role(
         f"tmux -u new-session -d -s {shlex.quote(session)} "
         f"{tmux_e_flags} "
         f"-c {shlex.quote(wt_path)} "
-        f"-- {claude_cmd}"
+        f"-- {agent_cmd}"
     )
 
     # Per-role tmux theme: turn on pane-border-status so the color is
@@ -379,7 +400,9 @@ def cmd_exec(args: object) -> None:
         raise SystemExit(1)
 
     container_id = up(Path.cwd())
-    if not _credentials_present(container_id):
+    if config.agents[role].harness == "claude-code" and not _credentials_present(
+        container_id
+    ):
         print(
             f"Error: claude credentials not yet present in container. "
             f"Run `moot up` first (it launches {config.human_interface} so you "
@@ -417,7 +440,12 @@ def cmd_up(args: object) -> None:
 
     container_id = up(Path.cwd())
 
-    cold_start = not _credentials_present(container_id)
+    claude_roles = [
+        r
+        for r in roles
+        if r in config.agents and config.agents[r].harness == "claude-code"
+    ]
+    cold_start = bool(claude_roles) and not _credentials_present(container_id)
     if cold_start:
         hi = config.human_interface
         if hi not in roles:
@@ -431,6 +459,12 @@ def cmd_up(args: object) -> None:
             print(
                 f"Error: human_interface = '{hi}' in moot.toml, but no such "
                 f"agent is configured. Fix [harness].human_interface."
+            )
+            raise SystemExit(1)
+        if config.agents[hi].harness != "claude-code":
+            print(
+                f"Error: cold start requires human_interface = '{hi}' to use "
+                f"harness 'claude-code' so first-time /login can run."
             )
             raise SystemExit(1)
         _launch_role(container_id, config, hi, prompt_override=None)
@@ -457,8 +491,11 @@ def cmd_up(args: object) -> None:
     # Dismiss the --dangerously-load-development-channels warning on every
     # launched role. The warning isn't persisted, so it re-prompts on every
     # launch — gating this on cold_start left warm-start agents stalled on it.
-    if cascaded_roles:
-        _auto_dismiss_dev_use_prompt(container_id, cascaded_roles)
+    claude_cascaded_roles = [
+        r for r in cascaded_roles if config.agents[r].harness == "claude-code"
+    ]
+    if claude_cascaded_roles:
+        _auto_dismiss_dev_use_prompt(container_id, claude_cascaded_roles)
 
     print(
         f"Started {alive} agents in container {container_id[:12]}. "
