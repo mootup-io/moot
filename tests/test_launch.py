@@ -308,12 +308,108 @@ def test_cmd_exec_codex_harness_threads_model_reasoning_effort(
     assert tmux_indices
     script = captured_args[tmux_indices[-1]][2]
     assert (
-        "codex --model gpt-5.4 -c model_reasoning_effort=high -- 'Hello spec'"
+        "codex --dangerously-bypass-approvals-and-sandbox "
+        "--model gpt-5.4 -c model_reasoning_effort=high -- 'Hello spec'"
         in script
     )
     assert "--effort" not in script
+    # --permission-mode is Claude's spelling of the same intent; codex takes
+    # the bypass flag instead. Neither harness gets the other's flag.
     assert "--permission-mode" not in script
     assert "--dangerously-load-development-channels" not in script
+
+
+def test_cmd_exec_codex_harness_omits_bypass_when_permission_mode_asks(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
+) -> None:
+    """A permission_mode that means "ask me" must not silently bypass.
+
+    The bypass flag is driven by [harness].permission_mode, not hardcoded:
+    'default' expresses a deliberate wish to be prompted, and honouring that
+    is what makes the bypass on the other path a decision rather than an
+    accident.
+    """
+    import moot.launch as launch
+
+    patch_config.permission_mode = "default"  # type: ignore[attr-defined]
+    spec_agent = patch_config.agents["spec"]  # type: ignore[attr-defined]
+    spec_agent.harness = "codex"
+    spec_agent.model = "gpt-5.4"
+
+    captured_args: list[list[str]] = []
+    monkeypatch.setattr(launch, "up", lambda wd: "cidCodex")
+
+    def fake_exec_capture(
+        container_id: str, args: list[str], env: dict[str, str] | None = None
+    ) -> tuple[int, str, str]:
+        captured_args.append(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return (1, "", "")
+        if args[0] == "test" and args[1] == "-d":
+            return (1, "", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+    monkeypatch.setattr(launch, "exec_detached", lambda *a, **kw: None)
+    monkeypatch.setattr(launch, "container_id_or_none", lambda wd: "cidCodex")
+
+    launch.cmd_exec(argparse.Namespace(role="spec", prompt=None))
+
+    tmux_indices = [
+        i for i, a in enumerate(captured_args) if a[:2] == ["bash", "-lc"]
+    ]
+    assert tmux_indices
+    script = captured_args[tmux_indices[-1]][2]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in script
+    assert "codex --model gpt-5.4" in script
+
+
+def test_seed_codex_trust_is_idempotent_and_preserves_operator_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Trusting a worktree must not clobber the operator's codex config.
+
+    A detached codex seat in an untrusted directory stops to ask and blocks
+    forever, so worktrees get pre-trusted the way _seed_claude_trust already
+    does for Claude. Appending rather than round-tripping the TOML keeps
+    comments and stanza order intact -- the same reason `moot config set`
+    walks the file as text.
+    """
+    import moot.launch as launch
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '# operator comment worth keeping\n'
+        '[mcp_servers.convo]\n'
+        'command = "/x/run.sh"\n'
+    )
+    monkeypatch.setattr(launch, "CODEX_CONFIG_PATH", str(cfg))
+
+    launch._seed_codex_trust("/workspaces/convo/.worktrees/spec")
+    once = cfg.read_text()
+
+    assert '[projects."/workspaces/convo/.worktrees/spec"]' in once
+    assert 'trust_level = "trusted"' in once
+    assert "# operator comment worth keeping" in once
+    assert '[mcp_servers.convo]' in once
+
+    launch._seed_codex_trust("/workspaces/convo/.worktrees/spec")
+    assert cfg.read_text() == once, "second seed must be a no-op"
+
+
+def test_seed_codex_trust_never_blocks_a_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unwritable codex config must not stop an agent from starting."""
+    import moot.launch as launch
+
+    monkeypatch.setattr(
+        launch, "CODEX_CONFIG_PATH", str(tmp_path / "nope" / "config.toml")
+    )
+    monkeypatch.setattr(
+        Path, "mkdir", lambda *a, **k: (_ for _ in ()).throw(OSError("denied"))
+    )
+    launch._seed_codex_trust("/workspaces/convo/.worktrees/spec")  # must not raise
 
 
 def test_cmd_exec_codex_harness_skips_claude_credentials_check(

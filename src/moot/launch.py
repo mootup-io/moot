@@ -22,6 +22,14 @@ from moot.devcontainer import (
 CREDENTIALS_PATH = "/home/node/.claude/.credentials.json"
 SETTINGS_PATH = "/home/node/.claude/settings.json"
 CLAUDE_JSON_PATH = "/home/node/.claude.json"
+CODEX_CONFIG_PATH = "/home/node/.codex/config.toml"
+
+# permission_mode values that mean "the container is the sandbox; do not ask".
+# Claude Code takes these verbatim via --permission-mode. Codex has no
+# equivalent vocabulary, so these map onto its bypass flag instead. Modes
+# outside this set (default, plan, acceptEdits) leave a harness on its own
+# default, because they express a deliberate wish to be asked.
+_BYPASS_PERMISSION_MODES = {"auto", "bypassPermissions", "dontAsk"}
 AUTH_POLL_INTERVAL_S = 5.0
 # Short grace period after first-run state has fully landed on disk.
 # Claude writes credentials + settings incrementally during the theme +
@@ -89,6 +97,36 @@ def _seed_claude_trust(worktree: str) -> None:
         entry["hasTrustDialogAccepted"] = True
         entry["hasCompletedProjectOnboarding"] = True
         path.write_text(json.dumps(data, indent=2))
+    except OSError:
+        pass  # never block a launch on trust-seeding
+
+
+def _seed_codex_trust(worktree: str) -> None:
+    """Pre-trust `worktree` for Codex. The codex analogue of _seed_claude_trust.
+
+    Codex keeps per-directory trust in ~/.codex/config.toml as
+    ``[projects."<dir>"] trust_level = "trusted"``. As with Claude, only the
+    main checkout is normally trusted, so an agent launched into
+    .worktrees/<role> finds itself somewhere untrusted and stops to ask —
+    which is the one thing a detached tmux seat cannot survive. The symptom is
+    a seat that reports RUNNING while sitting on "may I access this workspace",
+    and it is indistinguishable from a hang until someone attaches.
+
+    Written with a line-oriented append rather than a TOML round-trip, for the
+    same reason moot's own `config set` walks the file as text: a serializer
+    would reformat comments and stanza ordering out from under the operator.
+    Idempotent, and best-effort -- never blocks a launch.
+    """
+    path = Path(CODEX_CONFIG_PATH)
+    stanza = f'[projects."{worktree}"]'
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = path.read_text() if path.exists() else ""
+        if stanza in text:
+            return  # already present; do not touch the operator's value
+        prefix = "" if (text == "" or text.endswith("\n")) else "\n"
+        with path.open("a") as f:
+            f.write(f'{prefix}\n{stanza}\ntrust_level = "trusted"\n')
     except OSError:
         pass  # never block a launch on trust-seeding
 
@@ -258,6 +296,8 @@ def _launch_role(
     wt_path = _ensure_worktree(container_id, project, role)
     if harness == "claude-code":
         _seed_claude_trust(wt_path)
+    elif harness == "codex":
+        _seed_codex_trust(wt_path)
 
     # The claude command is built INLINE (per D2). The two literal strings
     # '--dangerously-load-development-channels' and 'server:convo-channel'
@@ -299,8 +339,24 @@ def _launch_role(
                 if model_reasoning_effort
                 else ""
             )
+            # The container is the sandbox. Agents run with only the
+            # capabilities the operator injected, precisely so they never
+            # stop to ask -- a detached seat has nobody to ask, and blocks
+            # silently while `moot status` reports RUNNING.
+            #
+            # Claude Code expresses this as --permission-mode; Codex has no
+            # matching vocabulary, so [harness].permission_mode maps onto its
+            # bypass flag here. Same key, same intent, both harnesses.
+            # Codex's own help says this flag is "intended solely for running
+            # in environments that are externally sandboxed" -- that is this.
+            bypass_flag = (
+                "--dangerously-bypass-approvals-and-sandbox "
+                if config.permission_mode in _BYPASS_PERMISSION_MODES
+                else ""
+            )
             agent_cmd = (
                 "codex "
+                f"{bypass_flag}"
                 f"{model_flag}{reasoning_flag}"
                 f"-- {shlex.quote(prompt)}"
             )
