@@ -379,6 +379,7 @@ def _launch_role(
         "CONVO_ROLE": role,
         "CONVO_API_URL": config.api_url,
         "CONVO_WORKTREE": wt_path,
+        "CONVO_TMUX_SESSION": session,
     }
     # Per-role provider binding: merge [agents.<role>].env from moot.toml,
     # resolving any ${secret:NAME} references from the secrets dir at launch.

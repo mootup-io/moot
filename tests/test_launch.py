@@ -145,6 +145,43 @@ def test_cmd_exec_launch_full_flow(
     assert script.index("pane-border-status") < script.index("pane-border-style")
 
 
+def test_cmd_exec_exports_exact_tmux_session(
+    monkeypatch: pytest.MonkeyPatch, patch_config: object
+) -> None:
+    """The launcher announces the same exact session it creates."""
+    import moot.launch as launch
+
+    captured_args: list[list[str]] = []
+    monkeypatch.setattr(launch, "up", lambda wd: "cid123")
+
+    def fake_exec_capture(
+        container_id: str,
+        args: list[str],
+        env: dict[str, str] | None = None,
+    ) -> tuple[int, str, str]:
+        captured_args.append(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return (1, "", "")
+        if args[0] == "test" and args[1] == "-d":
+            return (1, "", "")
+        return (0, "", "")
+
+    monkeypatch.setattr(launch, "exec_capture", fake_exec_capture)
+    monkeypatch.setattr(launch, "exec_detached", lambda *a, **kw: None)
+    monkeypatch.setattr(launch, "container_id_or_none", lambda wd: "cid123")
+
+    launch.cmd_exec(argparse.Namespace(role="spec", prompt=None))
+
+    session = launch._session_name("spec")
+    script = next(
+        args[2]
+        for args in captured_args
+        if args[:2] == ["bash", "-lc"] and "tmux -u new-session" in args[2]
+    )
+    assert f"-s {session}" in script
+    assert f"-e CONVO_TMUX_SESSION={session}" in script
+
+
 def test_cmd_exec_per_role_env_and_secret_resolution(
     monkeypatch: pytest.MonkeyPatch, patch_config: object, tmp_path: Path
 ) -> None:
