@@ -13,6 +13,7 @@ custom notifications from background tasks.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 from pathlib import Path
@@ -55,6 +56,12 @@ class ChannelAdapter(NotificationCore):
 
         role = os.environ.get("CONVO_ROLE", agent_id)
         self._tmux_session = os.environ.get("CONVO_TMUX_SESSION") or f"moot-{role}"
+
+        # Agent-local interval state. The task itself lives in _task_group;
+        # retaining only its scope keeps replacement and shutdown cancellable.
+        self._interval_scope: anyio.CancelScope | None = None
+        self._interval_seconds: float | None = None
+        self._interval_prompt: str | None = None
 
         self._server = Server(name="convo-channel", version="0.1.0")
         self._register_tools()
@@ -115,6 +122,40 @@ class ChannelAdapter(NotificationCore):
                     description="List spaces you're currently subscribed to.",
                     inputSchema={"type": "object", "properties": {}},
                 ),
+                Tool(
+                    name="set_interval",
+                    description=(
+                        "Set one agent-local interval that injects a prompt into "
+                        "this agent's session. Replaces any existing interval."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "seconds": {
+                                "type": "number",
+                                "minimum": 60,
+                                "description": "Interval in seconds (minimum 60).",
+                            },
+                            "prompt": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                                "description": "Prompt injected into this agent's session.",
+                            },
+                        },
+                        "required": ["seconds", "prompt"],
+                        "additionalProperties": False,
+                    },
+                ),
+                Tool(
+                    name="clear_interval",
+                    description="Cancel this agent's local interval, if one is set.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": False,
+                    },
+                ),
             ]
 
         @self._server.call_tool()
@@ -134,6 +175,12 @@ class ChannelAdapter(NotificationCore):
                 return await adapter._handle_unsubscribe_all()
             elif name == "list_subscriptions":
                 return await adapter._handle_list_subscriptions()
+            elif name == "set_interval":
+                return await adapter._handle_set_interval(
+                    args.get("seconds"), args.get("prompt")
+                )
+            elif name == "clear_interval":
+                return await adapter._handle_clear_interval()
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
     async def _handle_subscribe_space(self, space_id: str) -> list[TextContent]:
@@ -215,6 +262,132 @@ class ChannelAdapter(NotificationCore):
             return [TextContent(type="text", text="No active subscriptions")]
         lines = [f"- {sid}" for sid in self._subscriptions]
         return [TextContent(type="text", text="\n".join(lines))]
+
+    # ── Agent-local interval ───────────────────────────────────────
+
+    async def _handle_set_interval(
+        self, seconds: Any, prompt: Any
+    ) -> list[TextContent]:
+        if (
+            isinstance(seconds, bool)
+            or not isinstance(seconds, (int, float))
+            or not math.isfinite(seconds)
+            or seconds < 60
+        ):
+            logger.warning("Rejected agent interval: seconds must be finite and >= 60")
+            return [
+                TextContent(
+                    type="text",
+                    text="Error: seconds must be a finite number of at least 60.",
+                )
+            ]
+        if not isinstance(prompt, str) or not 1 <= len(prompt) <= 4096:
+            prompt_length = len(prompt) if isinstance(prompt, str) else "non-string"
+            logger.warning(
+                "Rejected agent interval: prompt length must be 1..4096 (got %s)",
+                prompt_length,
+            )
+            return [
+                TextContent(
+                    type="text",
+                    text="Error: prompt must be a string of 1 to 4096 characters.",
+                )
+            ]
+        if self._task_group is None:
+            return [
+                TextContent(
+                    type="text",
+                    text="Error: the channel adapter is not running.",
+                )
+            ]
+
+        replaced = self._interval_scope is not None
+        if self._interval_scope is not None:
+            self._interval_scope.cancel()
+        self._interval_scope = None
+        self._interval_seconds = None
+        self._interval_prompt = None
+
+        effective_seconds = float(seconds)
+        scope = anyio.CancelScope()
+        self._interval_scope = scope
+        self._interval_seconds = effective_seconds
+        self._interval_prompt = prompt
+        try:
+            self._task_group.start_soon(
+                self._interval_loop, scope, effective_seconds, prompt
+            )
+        except Exception as exc:
+            scope.cancel()
+            if self._interval_scope is scope:
+                self._interval_scope = None
+                self._interval_seconds = None
+                self._interval_prompt = None
+            logger.warning(
+                "Failed to start agent interval for %s (%s)",
+                self.agent_id,
+                type(exc).__name__,
+            )
+            return [
+                TextContent(
+                    type="text",
+                    text="Error: the agent interval could not be started.",
+                )
+            ]
+
+        logger.info(
+            "%s agent interval for %s: seconds=%s sink=auto",
+            "Replaced" if replaced else "Set",
+            self.agent_id,
+            effective_seconds,
+        )
+        return [
+            TextContent(
+                type="text",
+                text=f"Agent interval set for every {effective_seconds:g} seconds.",
+            )
+        ]
+
+    async def _handle_clear_interval(self) -> list[TextContent]:
+        scope = self._interval_scope
+        if scope is None:
+            return [TextContent(type="text", text="No agent interval was set.")]
+
+        self._interval_scope = None
+        self._interval_seconds = None
+        self._interval_prompt = None
+        scope.cancel()
+        logger.info("Cleared agent interval for %s", self.agent_id)
+        return [TextContent(type="text", text="Agent interval cleared.")]
+
+    async def _interval_loop(
+        self,
+        scope: anyio.CancelScope,
+        seconds: float,
+        prompt: str,
+    ) -> None:
+        meta = {
+            "source": "convo",
+            "event_type": "agent_interval",
+            "agent_id": self.agent_id,
+        }
+        try:
+            with scope:
+                while True:
+                    await anyio.sleep(seconds)
+                    try:
+                        await self._push_notification(prompt, meta)
+                    except Exception as exc:
+                        logger.warning(
+                            "Agent interval delivery failed for %s (%s); will retry",
+                            self.agent_id,
+                            type(exc).__name__,
+                        )
+        finally:
+            if self._interval_scope is scope:
+                self._interval_scope = None
+                self._interval_seconds = None
+                self._interval_prompt = None
 
     # ── Notification delivery ───────────────────────────────────────
 
@@ -353,3 +526,12 @@ class ChannelAdapter(NotificationCore):
                     await self._server.run(read_stream, write_stream, init_options)
 
                 tg.start_soon(run_server)
+
+    async def stop(self) -> None:
+        scope = self._interval_scope
+        self._interval_scope = None
+        self._interval_seconds = None
+        self._interval_prompt = None
+        if scope is not None:
+            scope.cancel()
+        await super().stop()
