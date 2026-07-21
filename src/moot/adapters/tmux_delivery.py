@@ -31,7 +31,7 @@ async def send_channel_xml_via_tmux(
     meta: dict[str, str],
     *,
     log_success: bool = True,
-    enter_delay_seconds: float = 0.15,
+    enter_delay_seconds: float = 1.0,
 ) -> bool:
     """Inject a channel notification into a tmux pane.
 
@@ -55,6 +55,12 @@ async def send_channel_xml_via_tmux(
             )
             return False
 
+        # Wait a full second before the submit key. A payload over ~1KiB
+        # arrives in the pane as one bracketed paste; a C-m sent inside the
+        # paste-accumulation window is absorbed into the buffer instead of
+        # submitting, and the seat then sits on `[Pasted Content NNNN chars]`
+        # looking healthy with its ring blocked. 1s is the value validated on
+        # the ken fleet; shorter delays (0.15s previously) strand codex panes.
         await anyio.sleep(enter_delay_seconds)
         enter = await anyio.run_process(
             ["tmux", "send-keys", "-t", tmux_session, "C-m"],
